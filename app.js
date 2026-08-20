@@ -11,6 +11,23 @@ const app = initializeApp(window.FIREBASE_CONFIG);
 const auth = getAuth(app);
 const db = getDatabase(app);
 
+const SESSION_KEY = 'familyHoldem.session.v1';
+
+function saveSession() {
+  try {
+    localStorage.setItem(SESSION_KEY, JSON.stringify({ roomCode, myName, myPhoto, isHost }));
+  } catch (e) { /* ignore */ }
+}
+function loadSession() {
+  try {
+    const raw = localStorage.getItem(SESSION_KEY);
+    return raw ? JSON.parse(raw) : null;
+  } catch (e) { return null; }
+}
+function clearSession() {
+  try { localStorage.removeItem(SESSION_KEY); } catch (e) { /* ignore */ }
+}
+
 let myUid = null;
 let roomCode = null;
 let isHost = false;
@@ -48,11 +65,32 @@ function makeRoomCode() {
 // AUTH
 // ====================================================================
 onAuthStateChanged(auth, (user) => {
-  if (user) { myUid = user.uid; }
+  if (!user) return;
+  myUid = user.uid;
+  tryAutoRejoin();
 });
 signInAnonymously(auth).catch((err) => {
   $('landing-error').textContent = 'Could not connect (sign-in failed): ' + err.message;
 });
+
+async function tryAutoRejoin() {
+  const saved = loadSession();
+  if (!saved || !saved.roomCode) return;
+  try {
+    const metaSnap = await get(ref(db, `rooms/${saved.roomCode}/meta`));
+    const playerSnap = await get(ref(db, `rooms/${saved.roomCode}/players/${myUid}`));
+    if (!metaSnap.exists() || !playerSnap.exists()) { clearSession(); return; }
+
+    roomCode = saved.roomCode;
+    myName = saved.myName;
+    myPhoto = saved.myPhoto;
+    isHost = metaSnap.val().hostUid === myUid;
+    enterLobby();
+  } catch (e) {
+    // couldn't confirm the room still exists — fall back to the landing screen
+    clearSession();
+  }
+}
 
 // ====================================================================
 // LANDING SCREEN
@@ -100,6 +138,7 @@ $('btn-create-room').addEventListener('click', async () => {
     name: myName.trim(), photo: myPhoto, chips: startingChips, seatIndex: 0, out: false,
   });
 
+  saveSession();
   enterLobby();
 });
 
@@ -127,6 +166,7 @@ $('btn-join-room').addEventListener('click', async () => {
     name: myName.trim(), photo: myPhoto, chips: meta.startingChips, seatIndex: Object.keys(existing).length, out: false,
   });
 
+  saveSession();
   enterLobby();
 });
 
@@ -357,7 +397,13 @@ function renderTable() {
   renderSeats();
   renderMyHand();
   renderActionBar();
-  if (handCache.phase === 'result') renderResult();
+  if (handCache.phase === 'result') {
+    renderResult();
+  } else {
+    // a new hand has begun (or is dealing) — make sure everyone's result
+    // overlay from the previous hand is dismissed, not just the host's
+    $('overlay-result').classList.add('hidden');
+  }
 }
 
 function renderSeatsIfOnTable() {
@@ -542,6 +588,7 @@ function renderGameOver() {
 }
 $('btn-new-game').addEventListener('click', () => {
   $('overlay-gameover').classList.add('hidden');
+  clearSession();
   location.reload();
 });
 
@@ -561,7 +608,7 @@ $('btn-view-standings').addEventListener('click', () => {
   $('result-wait-note').classList.add('hidden');
   $('overlay-result').classList.remove('hidden');
 });
-$('btn-leave-game').addEventListener('click', () => { location.reload(); });
+$('btn-leave-game').addEventListener('click', () => { clearSession(); location.reload(); });
 $('btn-end-game').addEventListener('click', () => {
-  if (confirm('Leave this table?')) location.reload();
+  if (confirm('Leave this table?')) { clearSession(); location.reload(); }
 });
