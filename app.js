@@ -1,5 +1,7 @@
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
-import { getAuth, signInAnonymously, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
+import {
+  getAuth, signInAnonymously, onAuthStateChanged, GoogleAuthProvider, signInWithPopup, signOut
+} from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
 import {
   getDatabase, ref, set, get, update, onValue, runTransaction, remove
 } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-database.js";
@@ -122,22 +124,42 @@ $('btn-create-room').addEventListener('click', async () => {
   const bigBlind = Math.max(smallBlind + 1, parseInt($('input-big-blind').value, 10) || smallBlind * 2);
   const raiseBlinds = $('input-raise-blinds').checked;
 
+  err.textContent = 'Confirming you\u2019re on the family hosting list\u2026';
+  let googleUser;
+  try {
+    const result = await signInWithPopup(auth, new GoogleAuthProvider());
+    googleUser = result.user;
+  } catch (e) {
+    err.textContent = 'Google sign-in didn\u2019t go through. If you opened this link from WhatsApp or Instagram, tap the \u22ee menu and choose "Open in browser," then try again. (' + (e.code || e.message) + ')';
+    return;
+  }
+
   roomCode = makeRoomCode();
   isHost = true;
+  myUid = googleUser.uid; // this device's identity for the rest of the session is now the verified Google account
 
-  await set(ref(db, `rooms/${roomCode}/meta`), {
-    hostUid: myUid,
-    started: false,
-    handNumber: 0,
-    smallBlind, bigBlind, raiseBlinds,
-    startingChips,
-    buttonUid: null,
-    createdAt: Date.now(),
-  });
+  try {
+    await set(ref(db, `rooms/${roomCode}/meta`), {
+      hostUid: myUid,
+      started: false,
+      handNumber: 0,
+      smallBlind, bigBlind, raiseBlinds,
+      startingChips,
+      buttonUid: null,
+      createdAt: Date.now(),
+    });
+  } catch (e) {
+    err.textContent = `${googleUser.email} isn\u2019t on the approved hosting list — ask whoever manages the family list to add it.`;
+    await signOut(auth);
+    await signInAnonymously(auth); // restore a normal identity so this device can still join as a player
+    return;
+  }
+
   await set(ref(db, `rooms/${roomCode}/players/${myUid}`), {
     name: myName.trim(), photo: myPhoto, chips: startingChips, seatIndex: 0, out: false,
   });
 
+  err.textContent = '';
   saveSession();
   enterLobby();
 });
@@ -257,14 +279,17 @@ function seatOrderedRoster() {
     .map(([uid, p]) => ({ id: uid, chips: p.chips }));
 }
 
-async function dealNewHand() {
+async function dealNewHand(opts) {
   if (!isHost) return;
+  const keepButton = opts && opts.keepButton;
   const roster = seatOrderedRoster().filter(p => p.chips > 0);
   if (roster.length < 2) { await settleGameOver(); return; }
 
   const prevButton = metaCache && metaCache.buttonUid;
   let buttonUid = roster[0].id;
-  if (prevButton) {
+  if (keepButton && prevButton && roster.some(p => p.id === prevButton)) {
+    buttonUid = prevButton;
+  } else if (prevButton) {
     const idx = roster.findIndex(p => p.id === prevButton);
     buttonUid = idx === -1 ? roster[0].id : roster[(idx + 1) % roster.length].id;
   }
@@ -300,7 +325,8 @@ async function hostReact() {
   const phase = handCache.phase;
 
   if (phase && phase.endsWith('-pending')) {
-    if (!hostDeck) return; // lost the deck (e.g. host reloaded) — cannot continue this hand
+    if (!hostDeck) { renderHostRecovery(true); return; } // lost the deck (e.g. host reloaded) — needs a redeal
+    renderHostRecovery(false);
     hostSettling = true;
     try {
       await runTransaction(ref(db, `rooms/${roomCode}/hand`), (current) => {
@@ -492,6 +518,18 @@ function phaseWaitingLabel() {
   return 'Waiting\u2026';
 }
 
+// Runs after renderActionBar(): overrides the action bar on the host's own
+// device only, when the host's in-memory deck is gone (e.g. they reloaded
+// mid-hand) and the game would otherwise sit stuck forever waiting for
+// cards nobody can deal anymore.
+function renderHostRecovery(stuck) {
+  if (!isHost || !stuck) return;
+  $('turn-banner').textContent = "Lost the deck (this device reloaded mid-hand)";
+  const btns = $('action-buttons');
+  btns.innerHTML = '';
+  addActionButton(btns, 'Redeal this hand', () => dealNewHand({ keepButton: true }));
+}
+
 function addActionButton(container, label, handler) {
   const b = document.createElement('button');
   b.className = 'btn btn-primary';
@@ -590,6 +628,16 @@ $('btn-new-game').addEventListener('click', () => {
   $('overlay-gameover').classList.add('hidden');
   clearSession();
   location.reload();
+});
+
+window.addEventListener('beforeunload', (e) => {
+  if (!isHost || !handCache) return;
+  const activePhases = ['preflop', 'flop', 'turn', 'river', 'showdown'];
+  const midHand = activePhases.includes(handCache.phase) || (handCache.phase || '').endsWith('-pending');
+  if (midHand) {
+    e.preventDefault();
+    e.returnValue = ''; // modern browsers show their own generic confirmation text
+  }
 });
 
 // ====================================================================

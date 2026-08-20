@@ -74,6 +74,16 @@ this: a family game uses a tiny fraction of the free Realtime Database
 quota (1 GiB stored, 10 GiB downloaded/month, 100 simultaneous
 connections). You won't hit a paywall for this use case.
 
+## Restricting who can host (optional)
+
+By default, anyone with a room code can *join* a table — that's intentional
+and unchanged. If you want to restrict who can *create* a table in the
+first place, see the "Restrict hosting to family emails" steps your
+assistant walked through with you, which cover: enabling Google as a
+sign-in provider, adding your family's emails to the database, adding your
+GitHub Pages domain to Firebase's authorized domains, and pasting in the
+updated `database.rules.json`.
+
 ## Customizing
 
 Same as before — `style.css` for the look, `engine.js` for the actual poker

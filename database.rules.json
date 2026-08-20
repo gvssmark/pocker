@@ -4,12 +4,12 @@
       "$room": {
         "meta": {
           ".read": true,
-          ".write": "auth != null"
+          ".write": "auth != null && ((!data.exists() && auth.token.email != null && root.child('allowedEmails').child(auth.token.email.toLowerCase().replace('.',',').replace('.',',').replace('.',',').replace('.',',').replace('.',',').replace('.',',')).exists()) || (data.exists() && auth.uid === data.child('hostUid').val()))"
         },
         "players": {
           ".read": true,
           "$uid": {
-            ".write": "auth != null"
+            ".write": "auth != null && (auth.uid === $uid || auth.uid === root.child('rooms').child($room).child('meta').child('hostUid').val())"
           }
         },
         "hand": {
@@ -29,6 +29,10 @@
           ".write": "auth != null && (auth.uid === $uid || auth.uid === root.child('rooms').child($room).child('meta').child('hostUid').val())"
         }
       }
+    },
+    "allowedEmails": {
+      ".read": false,
+      ".write": false
     }
   }
 }
