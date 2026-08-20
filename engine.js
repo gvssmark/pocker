@@ -277,6 +277,21 @@
 
   // Called by the dealer client (who holds `deck`) to reveal the next street.
   // Mutates hand.community / phase / betting fields; returns hand.
+  //
+  // IMPORTANT: this must be a PURE function of (hand, deck) — no side
+  // effects on `deck` itself. It's called from inside a Firebase
+  // transaction on the app side, and transactions may invoke their update
+  // function more than once per logical commit (that's normal, expected
+  // behavior, not an error case) — so mutating a shared external `deck`
+  // array here (e.g. via .pop()) would deal different cards on each
+  // invocation and corrupt the hand. Instead, community cards are derived
+  // by fixed position from the untouched post-hole-cards deck:
+  //   index 0        = preflop burn
+  //   index 1,2,3    = flop
+  //   index 4        = flop->turn burn
+  //   index 5        = turn
+  //   index 6        = turn->river burn
+  //   index 7        = river
   function dealNextStreet(hand, deck) {
     const base = hand.phase.replace('-pending', '');
     hand.order.forEach(uid => {
@@ -287,20 +302,19 @@
     hand.currentBet = 0;
 
     if (base === 'preflop') {
-      deck.pop();
-      hand.community.push(deck.pop(), deck.pop(), deck.pop());
+      hand.community = deck.slice(1, 4);
       hand.phase = 'flop';
     } else if (base === 'flop') {
-      deck.pop();
-      hand.community.push(deck.pop());
+      hand.community = deck.slice(1, 4).concat([deck[5]]);
       hand.phase = 'turn';
     } else if (base === 'turn') {
-      deck.pop();
-      hand.community.push(deck.pop());
+      hand.community = deck.slice(1, 4).concat([deck[5], deck[7]]);
       hand.phase = 'river';
     } else if (base === 'river') {
       hand.phase = 'showdown';
       return hand;
+    } else {
+      return hand; // already past river / unexpected phase — no-op
     }
 
     const canAct = seatsStillToAct(hand);
