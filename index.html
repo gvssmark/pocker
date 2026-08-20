@@ -1,0 +1,146 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>Family Hold'em</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,600;9..144,700&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@500;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<!-- ============ SETUP SCREEN ============ -->
+<section id="screen-setup" class="screen active">
+  <div class="setup-wrap">
+    <header class="setup-header">
+      <p class="eyebrow">Pass the device &middot; deal yourselves in</p>
+      <h1 class="brand">Family Hold&rsquo;em</h1>
+    </header>
+
+    <div class="setup-card">
+      <h2>Who's at the table tonight?</h2>
+      <p class="hint">Tap to add a player, up to 10. Long-press &middot; edit a name or photo anytime before you deal.</p>
+      <div id="roster-list" class="roster-list"></div>
+      <button id="btn-add-player" class="btn btn-ghost" type="button">+ Add player</button>
+    </div>
+
+    <div class="setup-card setup-grid">
+      <label class="field">
+        <span>Starting chips</span>
+        <input type="number" id="input-starting-chips" value="500" min="10" step="10">
+      </label>
+      <label class="field">
+        <span>Small blind</span>
+        <input type="number" id="input-small-blind" value="5" min="1" step="1">
+      </label>
+      <label class="field">
+        <span>Big blind</span>
+        <input type="number" id="input-big-blind" value="10" min="2" step="1">
+      </label>
+      <label class="field checkbox-field">
+        <input type="checkbox" id="input-raise-blinds">
+        <span>Raise blinds every hand</span>
+      </label>
+    </div>
+
+    <button id="btn-start-game" class="btn btn-primary btn-large" type="button">Shuffle up &amp; deal</button>
+    <p id="setup-error" class="setup-error" role="alert"></p>
+  </div>
+</section>
+
+<!-- ============ TABLE SCREEN ============ -->
+<section id="screen-table" class="screen">
+
+  <header class="table-topbar">
+    <button id="btn-menu" class="icon-btn" type="button" aria-label="Menu">&#9776;</button>
+    <div class="hand-info">
+      <span id="hand-number">Hand 1</span>
+      <span class="dot">&middot;</span>
+      <span id="blind-level">5 / 10</span>
+    </div>
+    <button id="btn-end-game" class="icon-btn" type="button" aria-label="End game">&#10005;</button>
+  </header>
+
+  <div class="table-oval-wrap">
+    <div class="table-oval" id="table-oval">
+      <div class="table-center">
+        <div class="community-cards" id="community-cards"></div>
+        <div class="pot-display">
+          <span class="pot-label">Pot</span>
+          <span class="pot-amount" id="pot-amount">0</span>
+        </div>
+        <div id="side-pots" class="side-pots"></div>
+      </div>
+      <!-- seats injected by JS -->
+      <div id="seats-layer" class="seats-layer"></div>
+    </div>
+  </div>
+
+  <footer class="action-bar" id="action-bar">
+    <div class="turn-banner" id="turn-banner">Waiting&hellip;</div>
+    <div class="action-buttons" id="action-buttons"></div>
+    <div class="raise-controls hidden" id="raise-controls">
+      <input type="range" id="raise-slider" min="0" max="0" value="0" step="1">
+      <div class="raise-row">
+        <span id="raise-amount-label">0</span>
+        <button id="btn-confirm-raise" class="btn btn-primary" type="button">Confirm</button>
+        <button id="btn-cancel-raise" class="btn btn-ghost" type="button">Back</button>
+      </div>
+    </div>
+  </footer>
+</section>
+
+<!-- ============ PASS & PEEK OVERLAY (privacy screen between turns) ============ -->
+<div id="overlay-pass" class="overlay hidden">
+  <div class="pass-card">
+    <p class="pass-eyebrow">Pass the device to</p>
+    <div class="pass-player">
+      <div class="pass-avatar" id="pass-avatar"></div>
+      <h2 id="pass-name">&nbsp;</h2>
+    </div>
+    <p class="pass-hint" id="pass-hint">Make sure no one else can see the screen.</p>
+    <button id="btn-reveal" class="btn btn-primary btn-large" type="button">I'm ready &mdash; show my cards</button>
+  </div>
+</div>
+
+<!-- ============ HOLE CARD PEEK (shown after reveal tap) ============ -->
+<div id="overlay-peek" class="overlay hidden">
+  <div class="peek-card">
+    <h2 id="peek-name">&nbsp;</h2>
+    <div class="peek-cards" id="peek-cards"></div>
+    <button id="btn-hide-peek" class="btn btn-primary btn-large" type="button">Seen it &mdash; hide &amp; pass on</button>
+  </div>
+</div>
+
+<!-- ============ SHOWDOWN / HAND RESULT ============ -->
+<div id="overlay-result" class="overlay hidden">
+  <div class="result-card">
+    <h2 id="result-title">Hand result</h2>
+    <div id="result-body" class="result-body"></div>
+    <button id="btn-next-hand" class="btn btn-primary btn-large" type="button">Next hand</button>
+  </div>
+</div>
+
+<!-- ============ GAME OVER ============ -->
+<div id="overlay-gameover" class="overlay hidden">
+  <div class="result-card">
+    <h2>Game over</h2>
+    <div id="gameover-body" class="result-body"></div>
+    <button id="btn-new-game" class="btn btn-primary btn-large" type="button">New game</button>
+  </div>
+</div>
+
+<!-- ============ SIDE MENU ============ -->
+<div id="overlay-menu" class="overlay hidden">
+  <div class="menu-card">
+    <h2>Menu</h2>
+    <button id="btn-resume" class="btn btn-ghost" type="button">Resume</button>
+    <button id="btn-view-standings" class="btn btn-ghost" type="button">Chip standings</button>
+    <button id="btn-quit-game" class="btn btn-ghost btn-danger" type="button">Quit to setup</button>
+  </div>
+</div>
+
+<script src="script.js"></script>
+</body>
+</html>
