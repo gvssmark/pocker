@@ -1,0 +1,34 @@
+{
+  "rules": {
+    "rooms": {
+      "$room": {
+        "meta": {
+          ".read": true,
+          ".write": "auth != null"
+        },
+        "players": {
+          ".read": true,
+          "$uid": {
+            ".write": "auth != null"
+          }
+        },
+        "hand": {
+          ".read": true,
+          ".write": "auth != null"
+        },
+        "chat": {
+          ".read": true,
+          ".write": "auth != null"
+        }
+      }
+    },
+    "private": {
+      "$room": {
+        "$uid": {
+          ".read": "auth != null && auth.uid === $uid",
+          ".write": "auth != null && (auth.uid === $uid || auth.uid === root.child('rooms').child($room).child('meta').child('hostUid').val())"
+        }
+      }
+    }
+  }
+}

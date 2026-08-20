@@ -437,3 +437,40 @@ input[type="range"] { width: 100%; accent-color: var(--brass); }
   .brand { font-size: 32px; }
   .setup-grid { grid-template-columns: 1fr 1fr; }
 }
+
+/* ==========================================================================
+   REMOTE-PLAY ADDITIONS
+   ========================================================================== */
+#screen-lobby, #screen-landing { overflow-y: auto; }
+.hidden { display: none !important; }
+
+.lobby-player-row {
+  display: flex; align-items: center; gap: 10px;
+  background: rgba(0,0,0,0.18);
+  border-radius: var(--radius-s);
+  padding: 8px 10px;
+  margin-bottom: 6px;
+}
+.lobby-player-row .roster-avatar { cursor: default; }
+.lobby-player-name { flex: 1; font-size: 15px; }
+.lobby-host-tag {
+  font-family: var(--font-mono); font-size: 10px; text-transform: uppercase;
+  color: var(--brass); border: 1px solid var(--brass); border-radius: 999px;
+  padding: 2px 8px;
+}
+
+.my-hand-panel {
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  padding: 8px 14px;
+  background: var(--wood);
+  border-top: 1px solid rgba(243,236,220,0.1);
+}
+.my-hand-cards { display: flex; gap: 6px; }
+.my-hand-cards .card { width: 40px; height: 56px; font-size: 15px; }
+.my-hand-name { font-family: var(--font-mono); font-size: 12px; color: var(--brass-bright); }
+
+#screen-table { flex-direction: column; }

@@ -1,62 +1,97 @@
-# Family Hold'em
+# Family Hold'em — Online
 
-A single-device, pass-and-play Texas Hold'em game for up to 10 players. No
-app to install, no accounts, no server — it's three files that run entirely
-in the browser.
+Remote-play Texas Hold'em for up to 10 players, each on their own device,
+anywhere in the world. Built on GitHub Pages (static hosting) + Firebase
+Realtime Database (free tier) for live sync.
 
-## How it works
+## One-time setup (about 10 minutes)
 
-- One device gets passed around the table. Before each hand, everyone takes
-  a private turn to peek at their two hole cards (a "pass to X, tap to
-  reveal" screen keeps them hidden from everyone else).
-- During betting, the app tells you whose turn it is and hands them the
-  fold/check/call/raise buttons after a privacy screen.
-- Hand evaluation (including split pots and side pots for all-ins) is
-  automatic.
-- Player names and photos, and your chip/blind settings, are remembered on
-  that device (via the browser's local storage) so you don't have to
-  re-enter your family each game night.
+### 1. Create a Firebase project
+1. Go to https://console.firebase.google.com, sign in with any Google account.
+2. **Add project** → give it any name → you can skip Google Analytics.
+3. Once created, click the **`</>`** (web) icon to register a web app. Give
+   it a nickname (e.g. "family-holdem") — you don't need Firebase Hosting.
+4. Firebase shows you a `firebaseConfig` object. Copy the values into
+   `firebase-config.js` in this repo (replace the `PASTE_YOUR_...` placeholders).
 
-## Deploying to GitHub Pages
+### 2. Turn on Anonymous auth
+In the Firebase console: **Build → Authentication → Get started → Sign-in
+method → Anonymous → Enable**. This is how each player's device gets a
+private identity without anyone needing an account or password.
 
-1. Create a new GitHub repo (public or private both work for Pages) and
-   upload `index.html`, `style.css`, and `script.js` to the root.
-2. In the repo, go to **Settings → Pages**, and under "Build and
-   deployment" set **Source** to "Deploy from a branch," branch `main`,
-   folder `/ (root)`.
-3. GitHub will give you a link like
-   `https://yourusername.github.io/your-repo-name/` — that's the link to
-   share with the family.
-4. Any time you edit the files and push, the live link updates in a minute
-   or two.
+### 3. Create the Realtime Database
+**Build → Realtime Database → Create database** → pick any region → start
+in **locked mode** (we're about to paste our own rules over the default).
 
-## About the photos
+### 4. Paste in the security rules
+In the Realtime Database's **Rules** tab, replace the contents with what's
+in `database.rules.json` in this repo, then **Publish**. This is what keeps
+each player's hole cards private — only that player's device (and the
+host, for dealing) can read them.
 
-You don't need to upload photo files to the repo at all — at setup, tap any
-player's avatar circle to choose a photo from that device, and it's stored
-right in the browser alongside their name. That's simpler than managing
-image files in the repo and works well since everyone shares one device.
+### 5. Deploy the files to GitHub Pages
+Upload `index.html`, `style.css`, `engine.js`, `app.js`, and your filled-in
+`firebase-config.js` to a GitHub repo, then **Settings → Pages** → deploy
+from the `main` branch, root folder. Share the resulting link + a room code
+with the family.
 
-If you'd rather commit photos to the repo itself (e.g. so they show up the
-same way on any device you play from), there's an `assets/photos/` folder
-ready for that — drop images in there and reference them by editing the
-`ROSTER_DEFAULTS` you set up in the app once, or just re-upload each photo
-through the app on whichever device you're using that night.
+## How a game night works
+
+1. Whoever creates the table becomes the **host** for that sitting — their
+   device holds the shuffled deck in memory and reveals the flop/turn/river
+   at the right moments, and settles each hand's payouts.
+2. **The host needs to keep that browser tab open for the whole game.** If
+   it closes mid-hand, the game pauses until they reopen the same link (the
+   room code and everyone's chip counts are safely stored in Firebase, so
+   nothing is lost — but a hand already in progress when the tab closes
+   can't be recovered, since the not-yet-revealed cards only ever existed
+   in that tab's memory, never on the server).
+3. Everyone else just opens the link, enters the room code, and plays from
+   wherever they are — phone, laptop, anywhere with a browser.
+4. Each player only ever sees their own two hole cards, in a panel at the
+   bottom of their own screen.
+
+## Why it's built this way (and what that trades off)
+
+A fully static site (GitHub Pages) can't run server logic, so there's no
+way to have a fully hidden, trusted dealer the way a real casino app would.
+The design here narrows that gap as much as it reasonably can for a home
+game:
+- Hole cards are stored per-player in Firebase, and the security rules
+  mean only that player's own device (and the host, purely to *deliver*
+  them) can read them — a casual glance at network traffic on someone
+  else's device won't expose your cards.
+- The tradeoff: this isn't hardened against a family member who's
+  comfortable opening browser dev tools and deliberately poking at the
+  app's own requests. For a trusted family game, that's a reasonable line
+  to draw; it wouldn't be for anything with real money at stake among
+  strangers.
+
+## Cost
+
+Firebase's free "Spark" plan needs no credit card and comfortably covers
+this: a family game uses a tiny fraction of the free Realtime Database
+quota (1 GiB stored, 10 GiB downloaded/month, 100 simultaneous
+connections). You won't hit a paywall for this use case.
 
 ## Customizing
 
-- Starting chips, small/big blind, and an optional "raise blinds every 4
-  hands" toggle are all set on the setup screen before dealing.
-- Colors, fonts, and layout live in `style.css` if you want to reskin it.
-- The whole game engine (dealing, betting rules, hand evaluation, side
-  pots) is in `script.js`, commented by section if you want to extend it —
-  a chat/notes field, a tournament mode with multiple tables, etc.
+Same as before — `style.css` for the look, `engine.js` for the actual poker
+rules (dealing, betting, hand evaluation, side pots — this file has no
+Firebase or DOM code in it at all, so it's easy to test changes in
+isolation), and `app.js` for the syncing/UI glue.
 
-## Known simplifications
+## A note on testing
 
-This is built for a casual family game, not a cardroom, so a couple of
-edge-case tournament rules are intentionally simplified: an all-in raise
-for less than a full minimum raise still reopens betting to players who've
-already acted (standard casino rules would sometimes disallow this). It
-doesn't affect who wins a hand or how much they win — just, in rare cases,
-whether someone gets one extra chance to act.
+The poker engine itself (`engine.js`) was tested extensively in isolation —
+hand evaluation against known hands, side-pot math against multi-way
+all-in scenarios, and full simulated games across 2–10 players (including
+forced-elimination runs) with chip totals verified to balance exactly
+every time. The Firebase wiring in `app.js` follows Firebase's standard,
+well-documented patterns, but — since it talks to Firebase's live
+servers — it couldn't be exercised end-to-end without your actual Firebase
+project. **Test it yourself with two browser tabs (or your phone + laptop)
+before game night**: create a table in one, join with the room code in the
+other, and play a hand or two to confirm cards, turns, and chip counts all
+behave as expected. If anything looks off, tell me what you're seeing and
+I'll fix it.
