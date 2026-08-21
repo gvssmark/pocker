@@ -4,7 +4,7 @@
 // alone and goes straight to the network, since game state must always be
 // live and can't be served from a cache.
 
-const CACHE_NAME = 'family-holdem-shell-v2';
+const CACHE_NAME = 'family-holdem-shell-v3';
 const SHELL_FILES = [
   './',
   './index.html',
@@ -15,6 +15,8 @@ const SHELL_FILES = [
   './manifest.json',
   './icon-192.png',
   './icon-512.png',
+  './instructions.html',
+  './admin-help.html',
 ];
 
 self.addEventListener('install', (event) => {

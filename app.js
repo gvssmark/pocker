@@ -1,6 +1,7 @@
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
 import {
-  getAuth, signInAnonymously, onAuthStateChanged, GoogleAuthProvider, signInWithPopup, signOut
+  getAuth, signInAnonymously, onAuthStateChanged, GoogleAuthProvider,
+  signInWithRedirect, getRedirectResult, signOut
 } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
 import {
   getDatabase, ref, set, get, update, onValue, runTransaction, remove
@@ -8,6 +9,33 @@ import {
 
 const E = window.PokerEngine;
 const $ = (id) => document.getElementById(id);
+
+// ====================================================================
+// DEBUG LOG
+// A per-device trace from "room created" through "cards showing," kept in
+// localStorage so it survives a reload. It resets to a fresh, empty log
+// every time a hand completes successfully — so if the game ever gets
+// stuck, whatever's in this log at that moment is exactly (and only) the
+// sequence of events that led to the stuck state, not noise from many
+// past successful hands. Accessible via Menu -> Copy debug log.
+// ====================================================================
+const DEBUG_LOG_KEY = 'familyHoldem.debugLog.v1';
+let debugLog = [];
+try {
+  const raw = localStorage.getItem(DEBUG_LOG_KEY);
+  if (raw) debugLog = JSON.parse(raw);
+} catch (e) { /* ignore */ }
+
+function logEvent(msg) {
+  const line = `[${new Date().toLocaleTimeString()}] ${msg}`;
+  debugLog.push(line);
+  if (debugLog.length > 300) debugLog = debugLog.slice(-300);
+  try { localStorage.setItem(DEBUG_LOG_KEY, JSON.stringify(debugLog)); } catch (e) { /* ignore */ }
+}
+function resetDebugLog(reason) {
+  debugLog = [`[${new Date().toLocaleTimeString()}] --- log reset: ${reason} ---`];
+  try { localStorage.setItem(DEBUG_LOG_KEY, JSON.stringify(debugLog)); } catch (e) { /* ignore */ }
+}
 
 const app = initializeApp(window.FIREBASE_CONFIG);
 const auth = getAuth(app);
@@ -67,18 +95,64 @@ function makeRoomCode() {
 // ====================================================================
 // AUTH
 // ====================================================================
-let authReady = false;
-onAuthStateChanged(auth, (user) => {
-  if (user) {
-    myUid = user.uid;
-    if (!authReady) { authReady = true; tryAutoRejoin(); }
-  } else if (!authReady) {
-    authReady = true;
-    signInAnonymously(auth).catch((err) => {
-      $('landing-error').textContent = 'Could not connect (sign-in failed): ' + err.message;
-    });
+// Room creation uses signInWithRedirect (not a popup): iOS treats a
+// "Add to Home Screen" PWA as an isolated browser container, and Google's
+// sign-in popup doesn't complete properly inside it — it finishes in a
+// separate real Safari tab instead, leaving the home-screen app never
+// knowing it succeeded. A redirect reloads the SAME page/container, which
+// works correctly there. The tradeoff: the whole page reloads mid-flow,
+// so we stash what the user was trying to do in localStorage first and
+// pick it back up after the reload resolves.
+const PENDING_CREATE_KEY = 'familyHoldem.pendingCreate.v1';
+function savePendingCreate(params) {
+  try { localStorage.setItem(PENDING_CREATE_KEY, JSON.stringify(params)); } catch (e) { /* ignore */ }
+}
+function loadPendingCreate() {
+  try { const raw = localStorage.getItem(PENDING_CREATE_KEY); return raw ? JSON.parse(raw) : null; }
+  catch (e) { return null; }
+}
+function clearPendingCreate() {
+  try { localStorage.removeItem(PENDING_CREATE_KEY); } catch (e) { /* ignore */ }
+}
+
+onAuthStateChanged(auth, (user) => { if (user) myUid = user.uid; });
+
+async function bootstrapAuth() {
+  $('landing-error').textContent = 'Connecting\u2026';
+  logEvent('App loaded, checking auth state');
+
+  let redirectUser = null;
+  try {
+    const result = await getRedirectResult(auth);
+    if (result && result.user) redirectUser = result.user;
+  } catch (e) {
+    logEvent('ERROR: redirect sign-in failed — ' + (e.code || e.message));
+    $('landing-error').textContent = 'Google sign-in didn\u2019t complete. Please try tapping "Create table" again. (' + (e.code || e.message) + ')';
   }
-});
+
+  const pending = loadPendingCreate();
+  if (redirectUser && pending) {
+    clearPendingCreate();
+    logEvent('Redirect sign-in resolved for ' + redirectUser.email + ' — resuming room creation');
+    myUid = redirectUser.uid;
+    await actuallyCreateRoom(redirectUser, pending);
+    return;
+  }
+
+  if (auth.currentUser) {
+    myUid = auth.currentUser.uid;
+    $('landing-error').textContent = '';
+    await tryAutoRejoin();
+  } else {
+    try {
+      await signInAnonymously(auth);
+      $('landing-error').textContent = '';
+    } catch (e) {
+      $('landing-error').textContent = 'Could not connect (sign-in failed): ' + e.message;
+    }
+  }
+}
+bootstrapAuth();
 
 async function tryAutoRejoin() {
   const saved = loadSession();
@@ -92,6 +166,7 @@ async function tryAutoRejoin() {
     myName = saved.myName;
     myPhoto = saved.myPhoto;
     isHost = metaSnap.val().hostUid === myUid;
+    logEvent('Auto-rejoined room ' + roomCode);
     enterLobby();
   } catch (e) {
     // couldn't confirm the room still exists — fall back to the landing screen
@@ -121,43 +196,51 @@ $('me-name').addEventListener('input', () => {
 $('btn-create-room').addEventListener('click', async () => {
   const err = $('landing-error');
   err.textContent = '';
-  if (!myUid) { err.textContent = 'Still connecting — try again in a second.'; return; }
   if (!myName.trim()) { err.textContent = 'Enter your name first.'; return; }
 
-  const startingChips = Math.max(10, parseInt($('input-starting-chips').value, 10) || 500);
-  const smallBlind = Math.max(1, parseInt($('input-small-blind').value, 10) || 5);
-  const bigBlind = Math.max(smallBlind + 1, parseInt($('input-big-blind').value, 10) || smallBlind * 2);
-  const raiseBlinds = $('input-raise-blinds').checked;
+  const params = {
+    startingChips: Math.max(10, parseInt($('input-starting-chips').value, 10) || 500),
+    smallBlind: Math.max(1, parseInt($('input-small-blind').value, 10) || 5),
+    bigBlind: 0,
+    raiseBlinds: $('input-raise-blinds').checked,
+    myName: myName.trim(),
+    myPhoto,
+  };
+  params.bigBlind = Math.max(params.smallBlind + 1, parseInt($('input-big-blind').value, 10) || params.smallBlind * 2);
 
-  err.textContent = 'Confirming you\u2019re on the family hosting list\u2026';
-  let googleUser;
   if (auth.currentUser && !auth.currentUser.isAnonymous) {
-    googleUser = auth.currentUser; // already verified earlier this browser session — no need to prompt again
-  } else {
-    try {
-      const result = await signInWithPopup(auth, new GoogleAuthProvider());
-      googleUser = result.user;
-    } catch (e) {
-      err.textContent = 'Google sign-in didn\u2019t go through. If you opened this link from WhatsApp or Instagram, tap the \u22ee menu and choose "Open in browser," then try again. (' + (e.code || e.message) + ')';
-      return;
-    }
+    // already verified earlier this session — no need to sign in again
+    await actuallyCreateRoom(auth.currentUser, params);
+    return;
   }
 
+  err.textContent = 'Redirecting to Google sign-in\u2026';
+  savePendingCreate(params);
+  logEvent('Starting Google redirect sign-in for room creation');
+  await signInWithRedirect(auth, new GoogleAuthProvider());
+  // page navigates away here — nothing after this line runs until reload
+});
+
+async function actuallyCreateRoom(googleUser, params) {
+  const err = $('landing-error');
+  myName = params.myName;
+  myPhoto = params.myPhoto;
   roomCode = makeRoomCode();
   isHost = true;
-  myUid = googleUser.uid; // this device's identity for the rest of the session is now the verified Google account
+  myUid = googleUser.uid;
 
   try {
     await set(ref(db, `rooms/${roomCode}/meta`), {
       hostUid: myUid,
       started: false,
       handNumber: 0,
-      smallBlind, bigBlind, raiseBlinds,
-      startingChips,
+      smallBlind: params.smallBlind, bigBlind: params.bigBlind, raiseBlinds: params.raiseBlinds,
+      startingChips: params.startingChips,
       buttonUid: null,
       createdAt: Date.now(),
     });
   } catch (e) {
+    logEvent('Room creation REJECTED for ' + googleUser.email + ' — not on allowlist');
     err.textContent = `${googleUser.email} isn\u2019t on the approved hosting list — ask whoever manages the family list to add it.`;
     await signOut(auth);
     await signInAnonymously(auth); // restore a normal identity so this device can still join as a player
@@ -165,13 +248,14 @@ $('btn-create-room').addEventListener('click', async () => {
   }
 
   await set(ref(db, `rooms/${roomCode}/players/${myUid}`), {
-    name: myName.trim(), photo: myPhoto, chips: startingChips, seatIndex: 0, out: false,
+    name: myName.trim(), photo: myPhoto, chips: params.startingChips, seatIndex: 0, out: false,
   });
 
+  logEvent('Room ' + roomCode + ' created, I am host');
   err.textContent = '';
   saveSession();
   enterLobby();
-});
+}
 
 $('btn-join-room').addEventListener('click', async () => {
   const err = $('landing-error');
@@ -202,6 +286,7 @@ $('btn-join-room').addEventListener('click', async () => {
   });
 
   saveSession();
+  logEvent('Joined room ' + roomCode);
   enterLobby();
 });
 
@@ -323,6 +408,8 @@ async function dealNewHand(opts) {
   const keepButton = opts && opts.keepButton;
   const roster = seatOrderedRoster().filter(p => p.chips > 0 && !(playersCache[p.id] && playersCache[p.id].onBreak));
   if (roster.length < 2) { await settleGameOver(); return; }
+  resetDebugLog('starting a new hand');
+  logEvent(`Dealing hand ${(metaCache.handNumber || 0) + 1} with ${roster.length} players`);
 
   const prevButton = metaCache && metaCache.buttonUid;
   let buttonUid = roster[0].id;
@@ -356,6 +443,7 @@ async function dealNewHand(opts) {
   rotated.forEach(p => { updates[`private/${roomCode}/${p.id}`] = hole[p.id]; });
 
   await update(ref(db), updates);
+  logEvent('Hole cards dealt and hand written to Firebase — waiting for betting to begin');
 }
 
 // ---- host reacts to state transitions (street deals, showdown, uncontested) ----
@@ -364,7 +452,11 @@ async function hostReact() {
   const phase = handCache.phase;
 
   if (phase && phase.endsWith('-pending')) {
-    if (!hostDeck) { renderHostRecovery(true); return; } // lost the deck (e.g. host reloaded) — needs a redeal
+    if (!hostDeck) {
+      logEvent(`STUCK: phase is "${phase}" but hostDeck is missing on this device — showing redeal option`);
+      renderHostRecovery(true);
+      return;
+    }
     renderHostRecovery(false);
     hostSettling = true;
     try {
@@ -373,6 +465,9 @@ async function hostReact() {
         const updated = E.dealNextStreet(current, hostDeck);
         return updated;
       });
+      logEvent(`Dealt next street (from "${phase}")`);
+    } catch (e) {
+      logEvent('ERROR dealing next street: ' + e.message);
     } finally { hostSettling = false; }
     return;
   }
@@ -411,6 +506,7 @@ async function settleHand(outcome) {
     phase: 'result',
     result: { lines: outcome.lines, potSummaries: outcome.potSummaries },
   });
+  logEvent('Hand settled successfully, chips paid out, result shown');
 
   // mark anyone at 0 chips as out
   const outUpdates = {};
@@ -432,6 +528,7 @@ function reactToShowdown() {
   const unfolded = E.activeUnfolded(handCache);
   if (!unfolded.includes(myUid)) return;
   if (handCache.revealed && handCache.revealed[myUid]) return;
+  logEvent('Revealing my hole cards for showdown');
   update(ref(db, `rooms/${roomCode}/hand/revealed`), { [myUid]: myHole });
 }
 
@@ -644,6 +741,7 @@ function showRaiseControls() {
 }
 
 async function submitAction(action, raiseTotal) {
+  logEvent(`Submitting action: ${action}${raiseTotal ? ' to ' + raiseTotal : ''}`);
   await runTransaction(ref(db, `rooms/${roomCode}/hand`), (current) => {
     if (!current || current.actingUid !== myUid) return current;
     try {
@@ -799,6 +897,19 @@ $('btn-close-result').addEventListener('click', () => {
   $('btn-close-result').classList.add('hidden');
   $('overlay-result').classList.add('hidden');
 });
+$('btn-copy-log').addEventListener('click', async () => {
+  const text = debugLog.join('\n') || '(log is empty)';
+  const btn = $('btn-copy-log');
+  try {
+    await navigator.clipboard.writeText(text);
+    btn.textContent = 'Copied!';
+  } catch (e) {
+    // clipboard API can be finicky on iOS Safari — fall back to a selectable prompt
+    window.prompt('Copy this text and send it over:', text);
+  }
+  setTimeout(() => { btn.textContent = 'Copy debug log'; }, 1500);
+});
+
 $('btn-leave-game').addEventListener('click', () => { clearSession(); location.reload(); });
 $('btn-end-game').addEventListener('click', () => {
   if (confirm('Leave this table?')) { clearSession(); location.reload(); }

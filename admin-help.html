@@ -1,0 +1,121 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Administrator Guide — Family Hold'em</title>
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,600;9..144,700&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@500;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="style.css">
+<style>
+  html, body { overflow-y: auto; height: auto; }
+  .doc-wrap { max-width: 680px; margin: 0 auto; padding: 32px 20px 80px; }
+  .doc-wrap h1 { font-family: var(--font-display); font-size: 32px; margin: 0 0 6px; }
+  .doc-wrap h2 { font-family: var(--font-display); font-size: 20px; margin: 34px 0 10px; color: var(--brass-bright); }
+  .doc-wrap h3 { font-family: var(--font-body); font-size: 15px; margin: 18px 0 6px; color: var(--cream); }
+  .doc-wrap p, .doc-wrap li { font-size: 14.5px; line-height: 1.65; color: var(--cream); }
+  .doc-wrap ul, .doc-wrap ol { padding-left: 22px; }
+  .card-box {
+    background: linear-gradient(180deg, var(--wood-light), var(--wood));
+    border: 1px solid rgba(243,236,220,0.08);
+    border-radius: var(--radius-l);
+    padding: 18px 20px;
+    margin: 14px 0;
+  }
+  .warn-box {
+    background: rgba(179,69,63,0.12);
+    border: 1px solid rgba(179,69,63,0.4);
+    border-radius: var(--radius-m);
+    padding: 14px 18px;
+    margin: 14px 0;
+  }
+  .warn-box strong { color: #e8a5a0; }
+  code, .mono {
+    font-family: var(--font-mono);
+    background: rgba(0,0,0,0.3);
+    padding: 1px 6px;
+    border-radius: 4px;
+    font-size: 13px;
+  }
+  pre {
+    font-family: var(--font-mono);
+    font-size: 12.5px;
+    background: rgba(0,0,0,0.3);
+    padding: 12px 14px;
+    border-radius: var(--radius-s);
+    overflow-x: auto;
+    white-space: pre;
+  }
+  a { color: var(--brass-bright); }
+  .back-link { display: inline-block; margin-top: 30px; }
+  .step-num {
+    display: inline-flex; align-items: center; justify-content: center;
+    width: 20px; height: 20px; border-radius: 50%;
+    background: var(--brass); color: var(--ink); font-weight: 700; font-size: 12px;
+    margin-right: 8px;
+  }
+</style>
+</head>
+<body>
+<div class="doc-wrap">
+  <p class="eyebrow" style="font-family:var(--font-mono); font-size:11px; letter-spacing:0.08em; text-transform:uppercase; color:var(--brass);">Family Hold'em</p>
+  <h1>Administrator Guide</h1>
+  <p>For whoever manages the Firebase project and the approved-hosts list. This assumes the app is already deployed — see the main README for first-time setup.</p>
+
+  <h2>Adding a new approved host email</h2>
+  <p>This is the step most likely to go wrong, so follow it exactly. Only emails on this list can <em>create</em> a table (anyone can still <em>join</em> one with a room code, unrestricted).</p>
+
+  <div class="warn-box">
+    <strong>The #1 mistake:</strong> importing at the wrong location. "Import JSON" replaces <em>everything</em> at whatever path you're currently viewing — do this at the database root and you will wipe your entire database, not just the email list.
+  </div>
+
+  <ol>
+    <li><span class="step-num">1</span>Go directly to this exact URL (edit in your project name if different):
+      <pre>https://console.firebase.google.com/project/YOUR-PROJECT/database/YOUR-PROJECT-default-rtdb/data/allowedEmails</pre>
+      Confirm the page says <strong>"This location does not have any data"</strong> (if it's empty) or shows your existing list — either way, confirm <code>allowedEmails</code> appears in the breadcrumb at the top, not just <code>data/</code>.
+    </li>
+    <li><span class="step-num">2</span>Click the <strong>&#8942;</strong> menu near the top of that panel → <strong>Import JSON</strong>.</li>
+    <li><span class="step-num">3</span>Paste a flat object — <strong>every "." in the email becomes a ","</strong>, and everything should be lowercase:
+      <pre>{
+  "jane,smith@gmail,com": true,
+  "raj,kumar@outlook,com": true
+}</pre>
+      Firebase database keys can't contain a literal dot, which is why this conversion is necessary. The app does this same conversion automatically when checking who signed in — so as long as the stored key matches this pattern, it'll match correctly.
+    </li>
+    <li><span class="step-num">4</span>Click <strong>Import</strong>.</li>
+    <li><span class="step-num">5</span><strong>Verify it landed correctly</strong>: click into one of the new entries and check the URL bar reads <code>.../data/allowedEmails/jane,smith@gmail,com</code> — with <code>allowedEmails</code> visible in the path. If instead you see something like <code>.../data/~2Fjane,smith@gmail,com</code> (no <code>allowedEmails</code> in the path, and a <code>~2F</code>), the import happened at the wrong level and needs to be deleted and redone — see "If you accidentally import at the root" below.
+    </li>
+  </ol>
+
+  <h3>To add one email without touching the rest</h3>
+  <p>Instead of a full Import, you can also just click the <strong>+</strong> next to <code>allowedEmails</code> in the data view, and add a single child: key = the sanitized email (dots → commas), value = <code>true</code>. Slower for a batch, but zero risk of overwriting anything.</p>
+
+  <h3>If you accidentally import at the root</h3>
+  <p>You'll see the stray email keys sitting as top-level nodes, siblings of <code>rooms</code> and <code>private</code> — and <code>rooms</code>/<code>private</code> will likely be gone (this only affects <em>live game state</em>, not anything permanent — nobody loses anything meaningful, any in-progress table just needs to be recreated). To recover:</p>
+  <ol>
+    <li>Delete each stray key sitting at the root individually.</li>
+    <li>Navigate precisely to <code>.../data/allowedEmails</code> again, confirm it's empty, and redo the import there.</li>
+  </ol>
+
+  <h2>Removing a host's access</h2>
+  <p>Navigate to the specific entry under <code>allowedEmails</code> and delete just that node. It only affects their ability to <em>create new</em> tables going forward — it doesn't remove them from any table they're already part of.</p>
+
+  <h2>Rules changes</h2>
+  <p>Whenever you edit <code>database.rules.json</code> in the repo, you still need to manually paste the updated content into <strong>Realtime Database → Rules</strong> tab in the Firebase console and click <strong>Publish</strong> — pushing to GitHub only updates the app files, not the live rules.</p>
+
+  <h2>Troubleshooting a stuck "Dealing…" screen</h2>
+  <div class="card-box">
+    <p>The host's device — whoever created the table — holds the shuffled deck only in that browser tab's memory, by design (that's what keeps it private). If that tab reloads or loses connection mid-hand, the game can't continue automatically.</p>
+    <p><strong>What to do:</strong> the host should see a <strong>"Redeal this hand"</strong> button appear automatically in this situation. Tapping it deals a fresh hand with the same players and blinds — no chips are lost or duplicated, since bets aren't committed to anyone's total until a hand fully finishes.</p>
+    <p>If it happens and you're not sure why: open the <strong>menu → Copy debug log</strong> on the device it happened on (usually the host's) and send that to whoever's maintaining the app — it traces every step from that hand's deal through to wherever it got stuck.</p>
+  </div>
+
+  <h2>If updates to the app don't seem to take effect</h2>
+  <p>The app installs a small offline cache (for the "Add to Home Screen" experience). It's set to always prefer the network when available, so a normal page reload should show the latest deployed version within a minute or two of pushing to GitHub. If something still looks stale: Settings → clear the site's data for this URL, or in desktop Chrome/Edge dev tools → Application tab → Service Workers → Unregister, then reload.</p>
+
+  <h2>Cost</h2>
+  <p>Everything here runs on Firebase's free Spark plan — no credit card, and this app's usage (a handful of family game nights) is a tiny fraction of the free quota.</p>
+
+  <a class="back-link" href="index.html">&larr; Back to the table</a>
+</div>
+</body>
+</html>
