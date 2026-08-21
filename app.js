@@ -175,11 +175,15 @@ $('btn-join-room').addEventListener('click', async () => {
   const metaSnap = await get(ref(db, `rooms/${code}/meta`));
   if (!metaSnap.exists()) { err.textContent = 'No table found with that code.'; return; }
   const meta = metaSnap.val();
-  if (meta.started) { err.textContent = 'That table already started — ask the host for a new code, or wait for the next game.'; return; }
 
   const playersSnap = await get(ref(db, `rooms/${code}/players`));
   const existing = playersSnap.exists() ? playersSnap.val() : {};
   if (Object.keys(existing).length >= 10) { err.textContent = 'That table is full (10 players max).'; return; }
+  // Note: no block on meta.started here — joining mid-game is allowed. The
+  // new player is added to the room now but won't be part of any hand
+  // already in progress (seats for the current hand were fixed at deal
+  // time); they're picked up automatically starting with the next hand,
+  // since dealNewHand() re-reads the live player list every time it runs.
 
   roomCode = code;
   isHost = (meta.hostUid === myUid);
@@ -479,6 +483,14 @@ function renderActionBar() {
   const banner = $('turn-banner');
 
   const bettingPhases = ['preflop', 'flop', 'turn', 'river'];
+
+  if (!handCache.order || !handCache.order.includes(myUid)) {
+    // joined mid-game — not part of the hand in progress, waiting for the next deal
+    btns.innerHTML = '';
+    banner.textContent = "You're in — you'll be dealt into the next hand";
+    return;
+  }
+
   if (!bettingPhases.includes(handCache.phase)) {
     btns.innerHTML = '';
     banner.textContent = phaseWaitingLabel();

@@ -4,7 +4,7 @@
 // alone and goes straight to the network, since game state must always be
 // live and can't be served from a cache.
 
-const CACHE_NAME = 'family-holdem-shell-v1';
+const CACHE_NAME = 'family-holdem-shell-v2';
 const SHELL_FILES = [
   './',
   './index.html',
@@ -40,18 +40,21 @@ self.addEventListener('fetch', (event) => {
   // Everything else (Firebase, fonts, anything cross-origin) passes through untouched.
   if (url.origin !== self.location.origin || event.request.method !== 'GET') return;
 
+  // Network-first: always try to get the latest version of the app first,
+  // since this app changes often during development. Only fall back to the
+  // cached copy if the network is genuinely unavailable (offline). A
+  // cache-first strategy here would silently keep serving old app.js/
+  // engine.js after every deploy, which is exactly the kind of "my fix
+  // isn't showing up" bug this app can't afford.
   event.respondWith(
-    caches.match(event.request).then((cached) => {
-      const network = fetch(event.request)
-        .then((resp) => {
-          if (resp && resp.ok) {
-            const copy = resp.clone();
-            caches.open(CACHE_NAME).then((cache) => cache.put(event.request, copy));
-          }
-          return resp;
-        })
-        .catch(() => cached);
-      return cached || network;
-    })
+    fetch(event.request)
+      .then((resp) => {
+        if (resp && resp.ok) {
+          const copy = resp.clone();
+          caches.open(CACHE_NAME).then((cache) => cache.put(event.request, copy));
+        }
+        return resp;
+      })
+      .catch(() => caches.match(event.request))
   );
 });
