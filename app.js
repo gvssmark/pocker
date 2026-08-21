@@ -1,7 +1,6 @@
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
 import {
-  getAuth, signInAnonymously, onAuthStateChanged, GoogleAuthProvider,
-  signInWithRedirect, getRedirectResult, signOut
+  getAuth, signInAnonymously, onAuthStateChanged, GoogleAuthProvider, signInWithPopup, signOut
 } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
 import {
   getDatabase, ref, set, get, update, onValue, runTransaction, remove
@@ -95,58 +94,34 @@ function makeRoomCode() {
 // ====================================================================
 // AUTH
 // ====================================================================
-// Room creation uses signInWithRedirect (not a popup): iOS treats a
-// "Add to Home Screen" PWA as an isolated browser container, and Google's
-// sign-in popup doesn't complete properly inside it — it finishes in a
-// separate real Safari tab instead, leaving the home-screen app never
-// knowing it succeeded. A redirect reloads the SAME page/container, which
-// works correctly there. The tradeoff: the whole page reloads mid-flow,
-// so we stash what the user was trying to do in localStorage first and
-// pick it back up after the reload resolves.
-const PENDING_CREATE_KEY = 'familyHoldem.pendingCreate.v1';
-function savePendingCreate(params) {
-  try { localStorage.setItem(PENDING_CREATE_KEY, JSON.stringify(params)); } catch (e) { /* ignore */ }
-}
-function loadPendingCreate() {
-  try { const raw = localStorage.getItem(PENDING_CREATE_KEY); return raw ? JSON.parse(raw) : null; }
-  catch (e) { return null; }
-}
-function clearPendingCreate() {
-  try { localStorage.removeItem(PENDING_CREATE_KEY); } catch (e) { /* ignore */ }
+// Room creation needs a real, verified identity (Google sign-in), checked
+// against the family allowlist. This uses a popup, not a redirect —
+// modern Chrome and Safari now block the background storage check that
+// Firebase's redirect flow depends on (a broad privacy restriction, not
+// specific to us), which made redirect unreliable across the board, not
+// just here. Popup is the solid choice for a normal browser tab.
+//
+// The one case popup can't fix: iOS's "Add to Home Screen" mode runs the
+// page in an isolated standalone container that Google's sign-in refuses
+// to run inside at all — this is a deliberate Google/Apple platform
+// restriction, not a bug, and there's no reliable client-side workaround.
+// So for that specific case, we detect it up front and tell the person
+// plainly to use regular Safari instead, rather than let them hit a
+// confusing silent failure.
+function isStandalonePwa() {
+  return window.matchMedia('(display-mode: standalone)').matches || window.navigator.standalone === true;
 }
 
 onAuthStateChanged(auth, (user) => { if (user) myUid = user.uid; });
 
 async function bootstrapAuth() {
-  $('landing-error').textContent = 'Connecting\u2026';
   logEvent('App loaded, checking auth state');
-
-  let redirectUser = null;
-  try {
-    const result = await getRedirectResult(auth);
-    if (result && result.user) redirectUser = result.user;
-  } catch (e) {
-    logEvent('ERROR: redirect sign-in failed — ' + (e.code || e.message));
-    $('landing-error').textContent = 'Google sign-in didn\u2019t complete. Please try tapping "Create table" again. (' + (e.code || e.message) + ')';
-  }
-
-  const pending = loadPendingCreate();
-  if (redirectUser && pending) {
-    clearPendingCreate();
-    logEvent('Redirect sign-in resolved for ' + redirectUser.email + ' — resuming room creation');
-    myUid = redirectUser.uid;
-    await actuallyCreateRoom(redirectUser, pending);
-    return;
-  }
-
   if (auth.currentUser) {
     myUid = auth.currentUser.uid;
-    $('landing-error').textContent = '';
     await tryAutoRejoin();
   } else {
     try {
       await signInAnonymously(auth);
-      $('landing-error').textContent = '';
     } catch (e) {
       $('landing-error').textContent = 'Could not connect (sign-in failed): ' + e.message;
     }
@@ -198,6 +173,11 @@ $('btn-create-room').addEventListener('click', async () => {
   err.textContent = '';
   if (!myName.trim()) { err.textContent = 'Enter your name first.'; return; }
 
+  if (isStandalonePwa() && !(auth.currentUser && !auth.currentUser.isAnonymous)) {
+    err.textContent = 'Google sign-in can\u2019t run from the home-screen icon (an Apple/Google restriction, not a bug). Open this same link in regular Safari or Chrome to create a table \u2014 you can switch back to the home-screen icon afterward to actually play.';
+    return;
+  }
+
   const params = {
     startingChips: Math.max(10, parseInt($('input-starting-chips').value, 10) || 500),
     smallBlind: Math.max(1, parseInt($('input-small-blind').value, 10) || 5),
@@ -208,17 +188,23 @@ $('btn-create-room').addEventListener('click', async () => {
   };
   params.bigBlind = Math.max(params.smallBlind + 1, parseInt($('input-big-blind').value, 10) || params.smallBlind * 2);
 
+  let googleUser;
   if (auth.currentUser && !auth.currentUser.isAnonymous) {
-    // already verified earlier this session — no need to sign in again
-    await actuallyCreateRoom(auth.currentUser, params);
-    return;
+    googleUser = auth.currentUser; // already verified earlier this session — no need to prompt again
+  } else {
+    err.textContent = 'Confirming you\u2019re on the family hosting list\u2026';
+    try {
+      const result = await signInWithPopup(auth, new GoogleAuthProvider());
+      googleUser = result.user;
+    } catch (e) {
+      logEvent('ERROR: popup sign-in failed — ' + (e.code || e.message));
+      err.textContent = 'Google sign-in didn\u2019t go through. (' + (e.code || e.message) + ')';
+      return;
+    }
   }
 
-  err.textContent = 'Redirecting to Google sign-in\u2026';
-  savePendingCreate(params);
-  logEvent('Starting Google redirect sign-in for room creation');
-  await signInWithRedirect(auth, new GoogleAuthProvider());
-  // page navigates away here — nothing after this line runs until reload
+  myUid = googleUser.uid;
+  await actuallyCreateRoom(googleUser, params);
 });
 
 async function actuallyCreateRoom(googleUser, params) {
@@ -467,7 +453,7 @@ async function hostReact() {
       });
       logEvent(`Dealt next street (from "${phase}")`);
     } catch (e) {
-      logEvent('ERROR dealing next street: ' + e.message);
+      logEvent(`ERROR dealing next street: ${e.code || '(no code)'} — ${e.message}`);
     } finally { hostSettling = false; }
     return;
   }
