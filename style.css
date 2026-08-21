@@ -95,6 +95,7 @@ button { font-family: inherit; }
   gap: 6px;
   font-size: 13px;
   color: var(--cream-dim);
+  width:150px;
 }
 .field input[type="number"] {
   font-family: var(--font-mono);
