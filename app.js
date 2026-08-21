@@ -43,6 +43,7 @@ let handCache = null;
 
 let hostDeck = null;       // only populated on the host's device, per active hand
 let hostSettling = false;  // guards against re-entrant settlement work
+let breakRequestsCache = {};
 
 function initialsFor(name) {
   return (name || '?').trim().split(/\s+/).slice(0, 2).map(w => w[0] || '').join('').toUpperCase() || '?';
@@ -66,13 +67,17 @@ function makeRoomCode() {
 // ====================================================================
 // AUTH
 // ====================================================================
+let authReady = false;
 onAuthStateChanged(auth, (user) => {
-  if (!user) return;
-  myUid = user.uid;
-  tryAutoRejoin();
-});
-signInAnonymously(auth).catch((err) => {
-  $('landing-error').textContent = 'Could not connect (sign-in failed): ' + err.message;
+  if (user) {
+    myUid = user.uid;
+    if (!authReady) { authReady = true; tryAutoRejoin(); }
+  } else if (!authReady) {
+    authReady = true;
+    signInAnonymously(auth).catch((err) => {
+      $('landing-error').textContent = 'Could not connect (sign-in failed): ' + err.message;
+    });
+  }
 });
 
 async function tryAutoRejoin() {
@@ -126,12 +131,16 @@ $('btn-create-room').addEventListener('click', async () => {
 
   err.textContent = 'Confirming you\u2019re on the family hosting list\u2026';
   let googleUser;
-  try {
-    const result = await signInWithPopup(auth, new GoogleAuthProvider());
-    googleUser = result.user;
-  } catch (e) {
-    err.textContent = 'Google sign-in didn\u2019t go through. If you opened this link from WhatsApp or Instagram, tap the \u22ee menu and choose "Open in browser," then try again. (' + (e.code || e.message) + ')';
-    return;
+  if (auth.currentUser && !auth.currentUser.isAnonymous) {
+    googleUser = auth.currentUser; // already verified earlier this browser session — no need to prompt again
+  } else {
+    try {
+      const result = await signInWithPopup(auth, new GoogleAuthProvider());
+      googleUser = result.user;
+    } catch (e) {
+      err.textContent = 'Google sign-in didn\u2019t go through. If you opened this link from WhatsApp or Instagram, tap the \u22ee menu and choose "Open in browser," then try again. (' + (e.code || e.message) + ')';
+      return;
+    }
   }
 
   roomCode = makeRoomCode();
@@ -241,6 +250,11 @@ function renderLobbyPlayers() {
   if ($('btn-start-game')) $('btn-start-game').disabled = count < 2;
 }
 
+$('btn-share-whatsapp').addEventListener('click', () => {
+  const message = `Join our poker table \u2014 ${window.location.href}\nRoom code: ${roomCode}`;
+  window.open('https://wa.me/?text=' + encodeURIComponent(message), '_blank');
+});
+
 $('btn-start-game').addEventListener('click', async () => {
   await update(ref(db, `rooms/${roomCode}/meta`), { started: true });
   showScreen('table');
@@ -255,6 +269,23 @@ let listenersAttached = false;
 function attachTableListeners() {
   if (listenersAttached) return;
   listenersAttached = true;
+  $('table-room-code').textContent = roomCode;
+
+  setInterval(() => {
+    if (!isHost || !handCache || !handCache.actionDeadline) return;
+    if (Date.now() < handCache.actionDeadline) return;
+    const bettingPhases = ['preflop', 'flop', 'turn', 'river'];
+    if (!bettingPhases.includes(handCache.phase) || !handCache.actingUid) return;
+    const uid = handCache.actingUid;
+    runTransaction(ref(db, `rooms/${roomCode}/hand`), (current) => {
+      if (!current || current.actingUid !== uid || !current.actionDeadline || Date.now() < current.actionDeadline) return current;
+      try {
+        const ps = current.players[uid];
+        const toCall = current.currentBet - ps.betThisRound;
+        return E.applyAction(current, current.startChips, uid, toCall <= 0 ? 'check' : 'fold');
+      } catch (e) { return current; }
+    });
+  }, 3000);
 
   onValue(ref(db, `rooms/${roomCode}/players`), (snap) => {
     playersCache = snap.val() || {};
@@ -272,6 +303,10 @@ function attachTableListeners() {
     myHole = snap.exists() ? snap.val() : null;
     renderMyHand();
   });
+
+  onValue(ref(db, `rooms/${roomCode}/breakRequests`), (snap) => {
+    breakRequestsCache = snap.val() || {};
+  });
 }
 
 // ====================================================================
@@ -286,7 +321,7 @@ function seatOrderedRoster() {
 async function dealNewHand(opts) {
   if (!isHost) return;
   const keepButton = opts && opts.keepButton;
-  const roster = seatOrderedRoster().filter(p => p.chips > 0);
+  const roster = seatOrderedRoster().filter(p => p.chips > 0 && !(playersCache[p.id] && playersCache[p.id].onBreak));
   if (roster.length < 2) { await settleGameOver(); return; }
 
   const prevButton = metaCache && metaCache.buttonUid;
@@ -429,7 +464,7 @@ function renderTable() {
   renderActionBar();
   if (handCache.phase === 'result') {
     renderResult();
-  } else {
+  } else if (!showingStandings) {
     // a new hand has begun (or is dealing) — make sure everyone's result
     // overlay from the previous hand is dismissed, not just the host's
     $('overlay-result').classList.add('hidden');
@@ -455,7 +490,7 @@ function renderSeats() {
     const ps = handCache && handCache.players ? handCache.players[uid] : null;
 
     const seat = document.createElement('div');
-    seat.className = 'seat' + (ps && ps.folded ? ' folded' : '') + (handCache && handCache.actingUid === uid ? ' acting' : '');
+    seat.className = 'seat' + (ps && ps.folded ? ' folded' : '') + (handCache && handCache.actingUid === uid ? ' acting' : '') + (pl.onBreak ? ' on-break' : '');
     seat.style.left = left + '%';
     seat.style.top = top + '%';
 
@@ -470,6 +505,7 @@ function renderSeats() {
         ${isButton ? '<div class="dealer-chip">D</div>' : ''}
       </div>
       <div class="seat-name-pill">${pl.name}${uid === myUid ? ' (you)' : ''}</div>
+      ${pl.onBreak ? '<div class="seat-break-tag">On break</div>' : ''}
       <div class="seat-chips">${pl.chips}${pl.out ? ' \u2014 out' : ''}</div>
       ${ps && ps.betThisRound > 0 ? `<div class="seat-bet">${ps.betThisRound}</div>` : ''}
     `;
@@ -477,21 +513,51 @@ function renderSeats() {
   });
 }
 
+let turnTimerInterval = null;
+function stopTurnTimer() {
+  if (turnTimerInterval) { clearInterval(turnTimerInterval); turnTimerInterval = null; }
+  $('turn-timer').classList.add('hidden');
+}
+function startTurnTimer(deadline) {
+  stopTurnTimer();
+  const el = $('turn-timer');
+  el.classList.remove('hidden');
+  const tick = () => {
+    const msLeft = deadline - Date.now();
+    if (msLeft <= 0) { el.textContent = '0:00'; el.classList.add('urgent'); return; }
+    const totalSec = Math.ceil(msLeft / 1000);
+    const m = Math.floor(totalSec / 60), s = totalSec % 60;
+    el.textContent = `${m}:${String(s).padStart(2, '0')}`;
+    el.classList.toggle('urgent', msLeft <= 20000);
+  };
+  tick();
+  turnTimerInterval = setInterval(tick, 1000);
+}
+
 function renderActionBar() {
   const btns = $('action-buttons');
   $('raise-controls').classList.add('hidden');
   const banner = $('turn-banner');
-
   const bettingPhases = ['preflop', 'flop', 'turn', 'river'];
+
+  const myPlayer = playersCache[myUid];
+  if (myPlayer && myPlayer.onBreak) {
+    stopTurnTimer();
+    btns.innerHTML = '';
+    banner.textContent = "You're on a break \u2014 tap the menu to return whenever you're ready";
+    return;
+  }
 
   if (!handCache.order || !handCache.order.includes(myUid)) {
     // joined mid-game — not part of the hand in progress, waiting for the next deal
+    stopTurnTimer();
     btns.innerHTML = '';
     banner.textContent = "You're in — you'll be dealt into the next hand";
     return;
   }
 
   if (!bettingPhases.includes(handCache.phase)) {
+    stopTurnTimer();
     btns.innerHTML = '';
     banner.textContent = phaseWaitingLabel();
     return;
@@ -500,12 +566,15 @@ function renderActionBar() {
   const actingUid = handCache.actingUid;
   const actingName = playersCache[actingUid] ? playersCache[actingUid].name : '';
   if (actingUid !== myUid) {
+    stopTurnTimer();
     btns.innerHTML = '';
     banner.textContent = `Waiting on ${actingName}\u2026`;
     return;
   }
 
   banner.textContent = 'Your move';
+  if (handCache.actionDeadline) startTurnTimer(handCache.actionDeadline); else stopTurnTimer();
+
   const ps = handCache.players[myUid];
   const myChips = handCache.startChips[myUid] + handCache.chipDelta[myUid];
   const toCall = handCache.currentBet - ps.betThisRound;
@@ -591,6 +660,7 @@ async function submitAction(action, raiseTotal) {
 let lastRenderedResultHandNumber = null;
 function renderResult() {
   if (!handCache.result) return;
+  showingStandings = false;
   const handNum = metaCache.handNumber;
   if (lastRenderedResultHandNumber === handNum) { /* keep showing, just ensure visible */ }
   lastRenderedResultHandNumber = handNum;
@@ -615,6 +685,7 @@ function renderResult() {
 
   $('btn-next-hand').classList.toggle('hidden', !isHost);
   $('result-wait-note').classList.toggle('hidden', isHost);
+  $('btn-close-result').classList.add('hidden');
   $('overlay-result').classList.remove('hidden');
 
   const remaining = Object.values(playersCache).filter(p => p.chips > 0).length;
@@ -655,8 +726,61 @@ window.addEventListener('beforeunload', (e) => {
 // ====================================================================
 // MENU
 // ====================================================================
-$('btn-menu').addEventListener('click', () => $('overlay-menu').classList.remove('hidden'));
+$('btn-menu').addEventListener('click', () => {
+  renderBreakMenu();
+  $('overlay-menu').classList.remove('hidden');
+});
 $('btn-resume').addEventListener('click', () => $('overlay-menu').classList.add('hidden'));
+
+function renderBreakMenu() {
+  const myPlayer = playersCache[myUid] || {};
+  const iRequested = !!breakRequestsCache[myUid];
+
+  $('btn-request-break').classList.toggle('hidden', !!myPlayer.onBreak || iRequested);
+  $('btn-request-break').textContent = 'Take a break';
+  $('btn-return-from-break').classList.toggle('hidden', !myPlayer.onBreak);
+
+  const hostPanel = $('host-break-requests');
+  if (isHost && Object.keys(breakRequestsCache).length > 0) {
+    hostPanel.classList.remove('hidden');
+    hostPanel.innerHTML = Object.keys(breakRequestsCache).map(uid => {
+      const name = (playersCache[uid] || {}).name || uid;
+      return `<div class="break-request-row"><span>${name} requested a break</span><button class="btn btn-primary" data-approve-uid="${uid}">Approve</button></div>`;
+    }).join('');
+    hostPanel.querySelectorAll('[data-approve-uid]').forEach(btn => {
+      btn.addEventListener('click', () => approveBreak(btn.getAttribute('data-approve-uid')));
+    });
+  } else {
+    hostPanel.classList.add('hidden');
+    hostPanel.innerHTML = '';
+  }
+}
+
+$('btn-request-break').addEventListener('click', async () => {
+  await set(ref(db, `rooms/${roomCode}/breakRequests/${myUid}`), true);
+  renderBreakMenu();
+});
+
+$('btn-return-from-break').addEventListener('click', async () => {
+  await update(ref(db, `rooms/${roomCode}/players/${myUid}`), { onBreak: false });
+  $('overlay-menu').classList.add('hidden');
+});
+
+async function approveBreak(uid) {
+  await update(ref(db, `rooms/${roomCode}/players/${uid}`), { onBreak: true });
+  await remove(ref(db, `rooms/${roomCode}/breakRequests/${uid}`));
+
+  // if they're live in the hand currently being played, fold them out of it now
+  await runTransaction(ref(db, `rooms/${roomCode}/hand`), (current) => {
+    if (!current || !current.order || !current.order.includes(uid)) return current;
+    const ps = current.players[uid];
+    if (!ps || ps.folded || ps.allIn) return current;
+    return E.forceFold(current, uid);
+  });
+
+  renderBreakMenu();
+}
+let showingStandings = false;
 $('btn-view-standings').addEventListener('click', () => {
   $('overlay-menu').classList.add('hidden');
   const ranked = Object.entries(playersCache).sort((a, b) => b[1].chips - a[1].chips);
@@ -666,7 +790,14 @@ $('btn-view-standings').addEventListener('click', () => {
   ).join('');
   $('btn-next-hand').classList.add('hidden');
   $('result-wait-note').classList.add('hidden');
+  $('btn-close-result').classList.remove('hidden');
+  showingStandings = true;
   $('overlay-result').classList.remove('hidden');
+});
+$('btn-close-result').addEventListener('click', () => {
+  showingStandings = false;
+  $('btn-close-result').classList.add('hidden');
+  $('overlay-result').classList.add('hidden');
 });
 $('btn-leave-game').addEventListener('click', () => { clearSession(); location.reload(); });
 $('btn-end-game').addEventListener('click', () => {

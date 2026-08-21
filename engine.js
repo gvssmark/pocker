@@ -17,6 +17,8 @@
   const RED_SUITS = ['h', 'd'];
   const HAND_NAMES = ['High Card','Pair','Two Pair','Three of a Kind','Straight','Flush','Full House','Four of a Kind','Straight Flush'];
 
+  const TURN_TIME_MS = 120000; // 2 minutes to act before an auto-action kicks in
+
   function rankLabel(rank) {
     if (rank === 14) return 'A';
     if (rank === 13) return 'K';
@@ -127,7 +129,8 @@
   // showdown/uncontested-win. This keeps the reducer pure and small.
   // ------------------------------------------------------------------
 
-  function startHand(rosterInHand, dealerUid, smallBlind, bigBlind) {
+  function startHand(rosterInHand, dealerUid, smallBlind, bigBlind, now) {
+    now = now || Date.now();
     // rosterInHand: [{id, chips}] in seat order (any rotation), chips > 0
     const dealerIdx = rosterInHand.findIndex(p => p.id === dealerUid);
     const order = [];
@@ -178,6 +181,7 @@
     hand.sbUid = sbUid;
     hand.bbUid = bbUid;
     hand.actingUid = twoPlayers ? sbUid : seatAfter(hand, bbUid);
+    hand.actionDeadline = hand.actingUid ? now + TURN_TIME_MS : null;
 
     return { hand, deck, chipsById: { ...chipsById }, hole };
   }
@@ -206,7 +210,8 @@
   // Applies one action from `actorUid`. Mutates and returns the hand.
   // `chipsById` is the caller's map of persistent chip counts (read-only here).
   // `action` in {fold, check, call, raise}; `raiseToTotal` required for raise.
-  function applyAction(hand, chipsById, actorUid, action, raiseToTotal) {
+  function applyAction(hand, chipsById, actorUid, action, raiseToTotal, now) {
+    now = now || Date.now();
     if (hand.actingUid !== actorUid) throw new Error('not this player\'s turn');
     const ps = hand.players[actorUid];
     const remaining = chipsById[actorUid] + hand.chipDelta[actorUid];
@@ -245,19 +250,21 @@
       throw new Error('unknown action ' + action);
     }
 
-    advanceActor(hand);
+    advanceActor(hand, now);
     return hand;
   }
 
   // Moves actingUid forward, or flags the hand as needing a street/showdown
   // by setting phase to a '-pending' sentinel the dealer client watches for.
-  function advanceActor(hand) {
+  function advanceActor(hand, now) {
+    now = now || Date.now();
     const unfolded = activeUnfolded(hand);
-    if (unfolded.length === 1) { hand.actingUid = null; hand.phase = 'uncontested'; return; }
+    if (unfolded.length === 1) { hand.actingUid = null; hand.actionDeadline = null; hand.phase = 'uncontested'; return; }
 
     const toAct = seatsStillToAct(hand);
     if (toAct.length === 0) {
       hand.actingUid = null;
+      hand.actionDeadline = null;
       hand.phase = hand.phase + '-pending'; // e.g. 'preflop-pending' -> dealer deals flop
       return;
     }
@@ -271,6 +278,22 @@
       }
     }
     hand.actingUid = next;
+    hand.actionDeadline = next ? now + TURN_TIME_MS : null;
+  }
+
+  // Folds `uid` regardless of whose turn it currently is. Used for both the
+  // 2-minute turn timeout and for a player starting a break mid-hand. If it
+  // happens to be their turn, advances the actor normally afterward.
+  function forceFold(hand, uid, now) {
+    now = now || Date.now();
+    const ps = hand.players[uid];
+    if (!ps || ps.folded || ps.allIn) return hand;
+    ps.folded = true;
+    ps.hasActed = true;
+    if (hand.actingUid === uid) {
+      advanceActor(hand, now);
+    }
+    return hand;
   }
 
   const STREET_AFTER = { preflop: 'flop', flop: 'turn', turn: 'river' };
@@ -292,7 +315,8 @@
   //   index 5        = turn
   //   index 6        = turn->river burn
   //   index 7        = river
-  function dealNextStreet(hand, deck) {
+  function dealNextStreet(hand, deck, now) {
+    now = now || Date.now();
     const base = hand.phase.replace('-pending', '');
     hand.order.forEach(uid => {
       const ps = hand.players[uid];
@@ -323,8 +347,9 @@
       hand.phase = hand.phase + '-pending';
       return hand;
     }
-    if (activeUnfolded(hand).length === 1) { hand.phase = 'uncontested'; return hand; }
+    if (activeUnfolded(hand).length === 1) { hand.phase = 'uncontested'; hand.actionDeadline = null; return hand; }
     hand.actingUid = firstActorPostflop(hand);
+    hand.actionDeadline = hand.actingUid ? now + TURN_TIME_MS : null;
     return hand;
   }
 
@@ -381,9 +406,9 @@
   }
 
   return {
-    HAND_NAMES, SUIT_SYMBOL, RED_SUITS, rankLabel,
+    HAND_NAMES, SUIT_SYMBOL, RED_SUITS, rankLabel, TURN_TIME_MS,
     freshDeck, shuffle, evaluate5, bestOf7, compareScores, computePots,
-    startHand, applyAction, dealNextStreet, resolveShowdown, resolveUncontested,
+    startHand, applyAction, dealNextStreet, resolveShowdown, resolveUncontested, forceFold,
     activeUnfolded, seatsStillToAct,
   };
 });

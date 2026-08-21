@@ -82,6 +82,7 @@
       <p class="eyebrow">Share this code with the family</p>
       <h1 class="brand" id="lobby-code" style="letter-spacing:0.08em;">----</h1>
       <p class="hint" id="lobby-link-hint"></p>
+      <button id="btn-share-whatsapp" class="btn btn-ghost" type="button" style="margin-top:8px;">Share on WhatsApp</button>
     </header>
 
     <div class="setup-card">
@@ -105,6 +106,8 @@
   <header class="table-topbar">
     <button id="btn-menu" class="icon-btn" type="button" aria-label="Menu">&#9776;</button>
     <div class="hand-info">
+      <span id="table-room-code" style="color:var(--brass);">----</span>
+      <span class="dot">&middot;</span>
       <span id="hand-number">Hand 1</span>
       <span class="dot">&middot;</span>
       <span id="blind-level">5 / 10</span>
@@ -132,6 +135,7 @@
 
   <footer class="action-bar" id="action-bar">
     <div class="turn-banner" id="turn-banner">Waiting&hellip;</div>
+    <div class="turn-timer hidden" id="turn-timer"></div>
     <div class="action-buttons" id="action-buttons"></div>
     <div class="raise-controls hidden" id="raise-controls">
       <input type="range" id="raise-slider" min="0" max="0" value="0" step="1">
@@ -151,6 +155,7 @@
     <div id="result-body" class="result-body"></div>
     <button id="btn-next-hand" class="btn btn-primary btn-large hidden" type="button">Next hand</button>
     <p id="result-wait-note" class="hint hidden">Waiting for the host to deal the next hand&hellip;</p>
+    <button id="btn-close-result" class="btn btn-ghost btn-large hidden" type="button">Back to table</button>
   </div>
 </div>
 
@@ -169,6 +174,9 @@
     <h2>Menu</h2>
     <button id="btn-resume" class="btn btn-ghost" type="button">Resume</button>
     <button id="btn-view-standings" class="btn btn-ghost" type="button">Chip standings</button>
+    <button id="btn-request-break" class="btn btn-ghost hidden" type="button">Take a break</button>
+    <button id="btn-return-from-break" class="btn btn-primary hidden" type="button">Return to the table</button>
+    <div id="host-break-requests" class="hidden"></div>
     <button id="btn-leave-game" class="btn btn-ghost btn-danger" type="button">Leave table</button>
   </div>
 </div>

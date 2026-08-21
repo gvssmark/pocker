@@ -95,7 +95,6 @@ button { font-family: inherit; }
   gap: 6px;
   font-size: 13px;
   color: var(--cream-dim);
-  width:160px;
 }
 .field input[type="number"] {
   font-family: var(--font-mono);
@@ -475,3 +474,29 @@ input[type="range"] { width: 100%; accent-color: var(--brass); }
 .my-hand-name { font-family: var(--font-mono); font-size: 12px; color: var(--brass-bright); }
 
 #screen-table { flex-direction: column; }
+
+.turn-timer {
+  text-align: center;
+  font-family: var(--font-mono);
+  font-size: 13px;
+  color: var(--cream-dim);
+  margin-bottom: 6px;
+}
+.turn-timer.urgent { color: var(--danger); font-weight: 700; }
+
+.break-request-row {
+  display: flex; align-items: center; gap: 8px;
+  background: rgba(0,0,0,0.18);
+  border-radius: var(--radius-s);
+  padding: 8px 10px;
+  margin-bottom: 6px;
+  font-size: 14px;
+}
+.break-request-row span { flex: 1; }
+.break-request-row .btn { padding: 6px 12px; font-size: 13px; }
+
+.seat.on-break { opacity: 0.35; }
+.seat-break-tag {
+  font-size: 9px; text-transform: uppercase; letter-spacing: 0.05em;
+  color: var(--brass-bright);
+}

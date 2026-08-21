@@ -19,6 +19,10 @@
         "chat": {
           ".read": true,
           ".write": "auth != null"
+        },
+        "breakRequests": {
+          ".read": true,
+          ".write": "auth != null"
         }
       }
     },
