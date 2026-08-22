@@ -50,6 +50,14 @@ const auth = getAuth(app);
 const db = getDatabase(app);
 
 const SESSION_KEY = 'familyHoldem.session.v1';
+const PROFILE_KEY = 'familyHoldem.profile.v1';
+function saveProfile() {
+  try { localStorage.setItem(PROFILE_KEY, JSON.stringify({ myName, myPhoto })); } catch (e) { /* ignore */ }
+}
+function loadProfile() {
+  try { const raw = localStorage.getItem(PROFILE_KEY); return raw ? JSON.parse(raw) : null; }
+  catch (e) { return null; }
+}
 
 function saveSession() {
   try {
@@ -161,6 +169,14 @@ async function tryAutoRejoin() {
 // ====================================================================
 // LANDING SCREEN
 // ====================================================================
+(function prefillProfile() {
+  const saved = loadProfile();
+  if (!saved) return;
+  if (saved.myName) { myName = saved.myName; $('me-name').value = myName; }
+  if (saved.myPhoto) { myPhoto = saved.myPhoto; }
+  $('me-avatar').innerHTML = myPhoto ? `<img src="${myPhoto}" alt="">` : initialsFor(myName);
+})();
+
 $('me-avatar').addEventListener('click', () => $('me-photo-input').click());
 $('me-photo-input').addEventListener('change', () => {
   const file = $('me-photo-input').files[0];
@@ -169,12 +185,14 @@ $('me-photo-input').addEventListener('change', () => {
   reader.onload = () => {
     myPhoto = reader.result;
     $('me-avatar').innerHTML = `<img src="${myPhoto}" alt="">`;
+    saveProfile();
   };
   reader.readAsDataURL(file);
 });
 $('me-name').addEventListener('input', () => {
   myName = $('me-name').value;
   if (!myPhoto) $('me-avatar').textContent = initialsFor(myName);
+  saveProfile();
 });
 
 $('btn-create-room').addEventListener('click', async () => {
@@ -322,14 +340,25 @@ function renderLobbyPlayers() {
   const list = $('lobby-players');
   list.innerHTML = '';
   const ordered = Object.entries(playersCache).sort((a, b) => a[1].seatIndex - b[1].seatIndex);
+  const canTransfer = isHost && ordered.length >= 2;
+
   ordered.forEach(([uid, p]) => {
     const row = document.createElement('div');
     row.className = 'lobby-player-row';
+    const isMe = uid === myUid;
+    const nameClickable = canTransfer && !isMe;
     row.innerHTML = `
       <div class="roster-avatar">${p.photo ? `<img src="${p.photo}" alt="">` : initialsFor(p.name)}</div>
-      <div class="lobby-player-name">${p.name}</div>
+      <div class="lobby-player-name${nameClickable ? ' name-clickable' : ''}">${p.name}${nameClickable ? '<span class="tap-hint">tap to make host</span>' : ''}</div>
       ${metaCache && metaCache.hostUid === uid ? '<span class="lobby-host-tag">Host</span>' : ''}
     `;
+    if (nameClickable) {
+      row.querySelector('.lobby-player-name').addEventListener('click', () => {
+        if (confirm(`Make ${p.name} the host? You'll lose host controls, and they'll take over dealing.`)) {
+          transferHost(uid);
+        }
+      });
+    }
     list.appendChild(row);
   });
   const count = ordered.length;
@@ -593,25 +622,31 @@ function renderSeats() {
   ordered.forEach(([uid, pl]) => {
     const ps = handCache && handCache.players ? handCache.players[uid] : null;
     const isActing = handCache && handCache.actingUid === uid;
+    const handInProgress = handCache && !['result', undefined, null].includes(handCache.phase);
+    const canTransfer = isHost && !handInProgress && ordered.length >= 2 && uid !== myUid;
 
     const seat = document.createElement('div');
     seat.className = 'seat' + (ps && ps.folded ? ' folded' : '') + (isActing ? ' acting' : '') + (pl.onBreak ? ' on-break' : '');
 
-    const showBack = ps && !ps.folded;
-    const cardsHTML = ps ? `<div class="seat-cards">${showBack ? cardBackHTML() + cardBackHTML() : ''}</div>` : '<div class="seat-cards"></div>';
     const isButton = metaCache && metaCache.buttonUid === uid;
 
     seat.innerHTML = `
-      ${cardsHTML}
       <div class="seat-avatar-wrap">
         <div class="seat-avatar">${pl.photo ? `<img src="${pl.photo}" alt="">` : initialsFor(pl.name)}</div>
         ${isButton ? '<div class="dealer-chip">D</div>' : ''}
       </div>
-      <div class="seat-name-pill">${pl.name}${uid === myUid ? ' (you)' : ''}</div>
+      <div class="seat-name-pill${canTransfer ? ' name-clickable' : ''}">${pl.name}${uid === myUid ? ' (you)' : ''}</div>
       <div class="seat-chips">${pl.chips}${pl.out ? ' \u2014 out' : ''}</div>
       ${pl.onBreak ? '<div class="seat-break-tag">On break</div>' : ''}
       ${ps && ps.betThisRound > 0 ? `<div class="seat-bet">${ps.betThisRound}</div>` : ''}
     `;
+    if (canTransfer) {
+      seat.querySelector('.seat-name-pill').addEventListener('click', () => {
+        if (confirm(`Make ${pl.name} the host? You'll lose host controls, and they'll take over dealing.`)) {
+          transferHost(uid);
+        }
+      });
+    }
     grid.appendChild(seat);
   });
 }
@@ -858,29 +893,6 @@ function renderBreakMenu() {
     hostPanel.classList.add('hidden');
     hostPanel.innerHTML = '';
   }
-
-  renderTransferHostPanel();
-}
-
-function renderTransferHostPanel() {
-  const panel = $('host-transfer-panel');
-  const handInProgress = handCache && !['result', undefined, null].includes(handCache.phase);
-  const others = Object.entries(playersCache).filter(([uid]) => uid !== myUid);
-
-  if (!isHost || handInProgress || others.length === 0) {
-    panel.classList.add('hidden');
-    panel.innerHTML = '';
-    return;
-  }
-
-  panel.classList.remove('hidden');
-  const list = $('host-transfer-list');
-  list.innerHTML = others.map(([uid, p]) =>
-    `<div class="break-request-row"><span>${p.name}</span><button class="btn btn-ghost" data-transfer-uid="${uid}">Make host</button></div>`
-  ).join('');
-  list.querySelectorAll('[data-transfer-uid]').forEach(btn => {
-    btn.addEventListener('click', () => transferHost(btn.getAttribute('data-transfer-uid')));
-  });
 }
 
 async function transferHost(newHostUid) {
@@ -945,7 +957,6 @@ $('btn-copy-log').addEventListener('click', async () => {
   setTimeout(() => { btn.textContent = 'Copy debug log'; }, 1500);
 });
 
-$('btn-leave-game').addEventListener('click', () => { clearSession(); location.reload(); });
-$('btn-end-game').addEventListener('click', () => {
+$('btn-leave-game').addEventListener('click', () => {
   if (confirm('Leave this table?')) { clearSession(); location.reload(); }
 });
