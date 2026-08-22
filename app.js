@@ -354,7 +354,7 @@ function renderLobbyPlayers() {
     `;
     if (nameClickable) {
       row.querySelector('.lobby-player-name').addEventListener('click', () => {
-        if (confirm(`Make ${p.name} the host? You'll lose host controls, and they'll take over dealing.`)) {
+        if (confirm(`Make ${p.name} the host? You'll lose host controls and be put on a break (you can return anytime from the menu), and they'll take over dealing.`)) {
           transferHost(uid);
         }
       });
@@ -642,7 +642,7 @@ function renderSeats() {
     `;
     if (canTransfer) {
       seat.querySelector('.seat-name-pill').addEventListener('click', () => {
-        if (confirm(`Make ${pl.name} the host? You'll lose host controls, and they'll take over dealing.`)) {
+        if (confirm(`Make ${pl.name} the host? You'll lose host controls and be put on a break (you can return anytime from the menu), and they'll take over dealing.`)) {
           transferHost(uid);
         }
       });
@@ -896,8 +896,10 @@ function renderBreakMenu() {
 }
 
 async function transferHost(newHostUid) {
+  const outgoingUid = myUid;
   await update(ref(db, `rooms/${roomCode}/meta`), { hostUid: newHostUid, buttonUid: null });
-  logEvent('Transferred host to ' + ((playersCache[newHostUid] || {}).name || newHostUid));
+  await update(ref(db, `rooms/${roomCode}/players/${outgoingUid}`), { onBreak: true });
+  logEvent('Transferred host to ' + ((playersCache[newHostUid] || {}).name || newHostUid) + ' and put myself on break');
   $('overlay-menu').classList.add('hidden');
 }
 
