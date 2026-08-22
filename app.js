@@ -488,11 +488,13 @@ async function settleHand(outcome) {
   });
 
   await update(ref(db), chipUpdates);
-  await update(ref(db, `rooms/${roomCode}/hand`), {
-    phase: 'result',
-    result: { lines: outcome.lines, potSummaries: outcome.potSummaries },
+  const settleResult = await runTransaction(ref(db, `rooms/${roomCode}/hand`), (current) => {
+    if (!current || current.result) return current; // already settled — don't double-write
+    current.phase = 'result';
+    current.result = { lines: outcome.lines, potSummaries: outcome.potSummaries };
+    return current;
   });
-  logEvent('Hand settled successfully, chips paid out, result shown');
+  logEvent(settleResult.committed ? 'Hand settled successfully, chips paid out, result shown' : 'Settlement transaction did not commit (already settled?)');
 
   // mark anyone at 0 chips as out
   const outUpdates = {};
@@ -509,13 +511,20 @@ async function settleGameOver() {
   await update(ref(db, `rooms/${roomCode}/meta`), { gameOver: true });
 }
 
-function reactToShowdown() {
-  if (!handCache || handCache.phase !== 'showdown' || !myHole) return;
-  const unfolded = E.activeUnfolded(handCache);
-  if (!unfolded.includes(myUid)) return;
-  if (handCache.revealed && handCache.revealed[myUid]) return;
-  logEvent('Revealing my hole cards for showdown');
-  update(ref(db, `rooms/${roomCode}/hand/revealed`), { [myUid]: myHole });
+async function reactToShowdown() {
+  if (!myHole) return;
+  let didReveal = false;
+  await runTransaction(ref(db, `rooms/${roomCode}/hand`), (current) => {
+    if (!current || current.phase !== 'showdown') return current;
+    const unfolded = E.activeUnfolded(current);
+    if (!unfolded.includes(myUid)) return current;
+    if (current.revealed && current.revealed[myUid]) return current;
+    if (!current.revealed) current.revealed = {};
+    current.revealed[myUid] = myHole;
+    didReveal = true; // for logging only — harmless if a retry sets it more than once
+    return current;
+  });
+  if (didReveal) logEvent('Revealed my hole cards for showdown');
 }
 
 // ====================================================================
