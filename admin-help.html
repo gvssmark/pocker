@@ -99,6 +99,18 @@
   <h2>Removing a host's access</h2>
   <p>Navigate to the specific entry under <code>allowedEmails</code> and delete just that node. It only affects their ability to <em>create new</em> tables going forward — it doesn't remove them from any table they're already part of.</p>
 
+  <h2>Recommended hosting workflow (getting around the iOS sign-in restriction)</h2>
+  <div class="card-box">
+    <p>Creating a table requires Google sign-in, and Google flatly refuses to run that inside iOS's "Add to Home Screen" mode — an Apple/Google platform restriction with no code-level fix. The clean workaround, which the app fully supports:</p>
+    <ol>
+      <li>Whoever's on the approved list opens the link in regular Safari/Chrome, signs in, and creates the table under <em>any</em> name — a throwaway like "Table" is fine, since this identity's only job is getting the table started.</li>
+      <li>That same person separately opens the home-screen icon and joins the same room with their real name — joining never needs sign-in, so this works fine from the home-screen app.</li>
+      <li>Back in the browser tab, they tap their real-name entry in the player list (a direct tap on the name — underlined once there are 2+ players) and confirm, transferring hosting duties to the home-screen-app identity.</li>
+    </ol>
+    <p><strong>After the transfer, the placeholder identity is fully disposable</strong> — it's automatically put on a break (excluded from all future hands, hidden from the table view, chips untouched but irrelevant), and the browser tab can be closed entirely. The game keeps running normally on whichever device now holds hosting duties; nothing about the transferred-to device depended on that original tab staying open.</p>
+    <p>Transfer only works <em>between</em> hands — never mid-hand, since the shuffled deck lives only in the current host's device memory and genuinely can't be handed off while a hand is live.</p>
+  </div>
+
   <h2>Rules changes</h2>
   <p>Whenever you edit <code>database.rules.json</code> in the repo, you still need to manually paste the updated content into <strong>Realtime Database → Rules</strong> tab in the Firebase console and click <strong>Publish</strong> — pushing to GitHub only updates the app files, not the live rules.</p>
 
@@ -111,6 +123,9 @@
 
   <h2>If updates to the app don't seem to take effect</h2>
   <p>The app installs a small offline cache (for the "Add to Home Screen" experience). It's set to always prefer the network when available, so a normal page reload should show the latest deployed version within a minute or two of pushing to GitHub. If something still looks stale: Settings → clear the site's data for this URL, or in desktop Chrome/Edge dev tools → Application tab → Service Workers → Unregister, then reload.</p>
+
+  <h2>The host leaving ends the game</h2>
+  <p>Whoever currently holds hosting duties leaving the table (via the menu) ends the game for everyone, with a confirmation shown first so it can't happen by accident. This is deliberate — this app has no server component to keep a game alive with nobody responsible for dealing, so a clean, obvious end beats a table quietly stuck forever. It only fires for the <em>current</em> host — after a transfer (see above), the outgoing host can leave freely without ending anything.</p>
 
   <h2>Cost</h2>
   <p>Everything here runs on Firebase's free Spark plan — no credit card, and this app's usage (a handful of family game nights) is a tiny fraction of the free quota.</p>

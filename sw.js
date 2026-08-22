@@ -4,7 +4,7 @@
 // alone and goes straight to the network, since game state must always be
 // live and can't be served from a cache.
 
-const CACHE_NAME = 'family-holdem-shell-v11';
+const CACHE_NAME = 'family-holdem-shell-v12';
 const SHELL_FILES = [
   './',
   './index.html',
