@@ -36,6 +36,15 @@ function resetDebugLog(reason) {
   try { localStorage.setItem(DEBUG_LOG_KEY, JSON.stringify(debugLog)); } catch (e) { /* ignore */ }
 }
 
+// Best-effort orientation lock. Supported on Android Chrome (typically only
+// while running installed/standalone, which is exactly our PWA case) — not
+// supported at all on iOS Safari, where the CSS rotate-overlay is the real
+// fallback. Wrapped defensively since this API is inconsistent across
+// browsers and throws in several unsupported configurations.
+if (screen.orientation && screen.orientation.lock) {
+  screen.orientation.lock('portrait').catch(() => { /* not supported here — the CSS overlay covers it */ });
+}
+
 const app = initializeApp(window.FIREBASE_CONFIG);
 const auth = getAuth(app);
 const db = getDatabase(app);
@@ -289,10 +298,17 @@ function enterLobby() {
   onValue(ref(db, `rooms/${roomCode}/meta`), (snap) => {
     metaCache = snap.val();
     if (!metaCache) return;
+    const wasHost = isHost;
+    isHost = metaCache.hostUid === myUid;
     if (metaCache.started) {
       showScreen('table');
       attachTableListeners();
+    } else {
+      $('lobby-host-controls').classList.toggle('hidden', !isHost);
+      $('lobby-guest-note').classList.toggle('hidden', isHost);
     }
+    if (wasHost !== isHost) logEvent(isHost ? 'This device is now the host' : 'Host duties transferred away from this device');
+    renderTable();
   });
 
   onValue(ref(db, `rooms/${roomCode}/players`), (snap) => {
@@ -568,26 +584,21 @@ function renderSeatsIfOnTable() {
 }
 
 function renderSeats() {
-  const layer = $('seats-layer');
-  if (!layer) return;
-  layer.innerHTML = '';
+  const grid = $('seats-grid');
+  if (!grid) return;
+  grid.innerHTML = '';
   const ordered = Object.entries(playersCache).sort((a, b) => a[1].seatIndex - b[1].seatIndex);
-  const n = ordered.length;
-  if (n === 0) return;
+  if (ordered.length === 0) return;
 
-  ordered.forEach(([uid, pl], i) => {
-    const angle = (2 * Math.PI * i) / n - Math.PI / 2;
-    const left = 50 + 43 * Math.cos(angle);
-    const top = 50 + 40 * Math.sin(angle);
+  ordered.forEach(([uid, pl]) => {
     const ps = handCache && handCache.players ? handCache.players[uid] : null;
+    const isActing = handCache && handCache.actingUid === uid;
 
     const seat = document.createElement('div');
-    seat.className = 'seat' + (ps && ps.folded ? ' folded' : '') + (handCache && handCache.actingUid === uid ? ' acting' : '') + (pl.onBreak ? ' on-break' : '');
-    seat.style.left = left + '%';
-    seat.style.top = top + '%';
+    seat.className = 'seat' + (ps && ps.folded ? ' folded' : '') + (isActing ? ' acting' : '') + (pl.onBreak ? ' on-break' : '');
 
     const showBack = ps && !ps.folded;
-    const cardsHTML = ps ? `<div class="seat-cards">${showBack ? cardBackHTML() + cardBackHTML() : ''}</div>` : '';
+    const cardsHTML = ps ? `<div class="seat-cards">${showBack ? cardBackHTML() + cardBackHTML() : ''}</div>` : '<div class="seat-cards"></div>';
     const isButton = metaCache && metaCache.buttonUid === uid;
 
     seat.innerHTML = `
@@ -597,11 +608,11 @@ function renderSeats() {
         ${isButton ? '<div class="dealer-chip">D</div>' : ''}
       </div>
       <div class="seat-name-pill">${pl.name}${uid === myUid ? ' (you)' : ''}</div>
-      ${pl.onBreak ? '<div class="seat-break-tag">On break</div>' : ''}
       <div class="seat-chips">${pl.chips}${pl.out ? ' \u2014 out' : ''}</div>
+      ${pl.onBreak ? '<div class="seat-break-tag">On break</div>' : ''}
       ${ps && ps.betThisRound > 0 ? `<div class="seat-bet">${ps.betThisRound}</div>` : ''}
     `;
-    layer.appendChild(seat);
+    grid.appendChild(seat);
   });
 }
 
@@ -847,6 +858,35 @@ function renderBreakMenu() {
     hostPanel.classList.add('hidden');
     hostPanel.innerHTML = '';
   }
+
+  renderTransferHostPanel();
+}
+
+function renderTransferHostPanel() {
+  const panel = $('host-transfer-panel');
+  const handInProgress = handCache && !['result', undefined, null].includes(handCache.phase);
+  const others = Object.entries(playersCache).filter(([uid]) => uid !== myUid);
+
+  if (!isHost || handInProgress || others.length === 0) {
+    panel.classList.add('hidden');
+    panel.innerHTML = '';
+    return;
+  }
+
+  panel.classList.remove('hidden');
+  const list = $('host-transfer-list');
+  list.innerHTML = others.map(([uid, p]) =>
+    `<div class="break-request-row"><span>${p.name}</span><button class="btn btn-ghost" data-transfer-uid="${uid}">Make host</button></div>`
+  ).join('');
+  list.querySelectorAll('[data-transfer-uid]').forEach(btn => {
+    btn.addEventListener('click', () => transferHost(btn.getAttribute('data-transfer-uid')));
+  });
+}
+
+async function transferHost(newHostUid) {
+  await update(ref(db, `rooms/${roomCode}/meta`), { hostUid: newHostUid, buttonUid: null });
+  logEvent('Transferred host to ' + ((playersCache[newHostUid] || {}).name || newHostUid));
+  $('overlay-menu').classList.add('hidden');
 }
 
 $('btn-request-break').addEventListener('click', async () => {

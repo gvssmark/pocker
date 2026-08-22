@@ -95,7 +95,6 @@ button { font-family: inherit; }
   gap: 6px;
   font-size: 13px;
   color: var(--cream-dim);
-  width:150px;
 }
 .field input[type="number"] {
   font-family: var(--font-mono);
@@ -223,52 +222,57 @@ button { font-family: inherit; }
 }
 .hand-info .dot { opacity: 0.5; }
 
-.table-oval-wrap {
+.table-panel {
   flex: 1;
   display: flex;
-  align-items: center;
+  flex-direction: column;
   justify-content: center;
-  padding: 10px;
+  gap: 18px;
+  padding: 16px 12px;
   min-height: 0;
-}
-.table-oval {
-  position: relative;
-  width: min(94vw, 640px);
-  height: min(66vw, 400px);
-  max-height: 62vh;
   background:
-    radial-gradient(ellipse at 50% 40%, var(--felt) 0%, var(--felt-dark) 100%);
-  border-radius: 50% / 50%;
-  border: 14px solid var(--wood);
+    radial-gradient(ellipse at 50% 30%, var(--felt) 0%, var(--felt-dark) 100%);
+  margin: 8px;
+  border-radius: var(--radius-l);
+  border: 10px solid var(--wood);
   box-shadow:
     0 0 0 3px var(--brass) inset,
     0 14px 40px var(--shadow),
     inset 0 0 60px rgba(0,0,0,0.35);
+  overflow-y: auto;
 }
 
-.table-center {
-  position: absolute;
-  top: 50%; left: 50%;
-  transform: translate(-50%, -50%);
+/* up to 10 players, wrapping naturally into two rows of up to 5 */
+.seats-grid {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  align-content: flex-start;
+  gap: 14px 10px;
+  flex: none;
+}
+
+.center-display {
+  flex: none;
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 8px;
-  width: 70%;
+  gap: 10px;
+  padding: 10px 0;
 }
-.community-cards { display: flex; gap: 6px; min-height: 44px; justify-content: center; flex-wrap: wrap; }
-.pot-display {
-  display: flex; align-items: baseline; gap: 6px;
-  background: rgba(0,0,0,0.25);
-  padding: 4px 14px;
+.community-cards-big { display: flex; gap: 10px; min-height: 78px; justify-content: center; flex-wrap: wrap; }
+.community-cards-big .card { width: 52px; height: 74px; font-size: 20px; border-radius: 7px; }
+.community-cards-big .card .suit { font-size: 20px; }
+.pot-display-big {
+  display: flex; align-items: baseline; gap: 8px;
+  background: rgba(0,0,0,0.3);
+  padding: 8px 22px;
   border-radius: 999px;
-  border: 1px solid var(--felt-line);
+  border: 1px solid var(--brass);
 }
-.pot-label { font-size: 11px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--brass); }
-.pot-amount { font-family: var(--font-mono); font-weight: 700; font-size: 17px; color: var(--cream); }
+.pot-display-big .pot-label { font-size: 12px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--brass); }
+.pot-display-big .pot-amount { font-family: var(--font-mono); font-weight: 700; font-size: 24px; color: var(--cream); }
 .side-pots { font-family: var(--font-mono); font-size: 11px; color: var(--cream-dim); text-align: center; }
-
-.seats-layer { position: absolute; inset: 0; }
 
 /* playing card */
 .card {
@@ -290,11 +294,15 @@ button { font-family: inherit; }
 }
 .card .suit { font-size: 14px; margin-top: 1px; }
 
-/* seat */
+/* player tile */
+@keyframes seat-turn-flash {
+  0%, 100% { border-color: var(--danger); box-shadow: 0 0 0 0 rgba(211,47,47,0.5); }
+  50% { border-color: #ff6b60; box-shadow: 0 0 14px 3px rgba(255,107,96,0.75); }
+}
 .seat {
-  position: absolute;
-  width: 92px;
-  transform: translate(-50%, -50%);
+  flex: 0 0 18%;
+  max-width: 90px;
+  min-width: 60px;
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -302,17 +310,20 @@ button { font-family: inherit; }
   text-align: center;
 }
 .seat.folded { opacity: 0.4; }
-.seat.acting .seat-name-pill { box-shadow: 0 0 0 2px var(--brass-bright), 0 0 12px var(--brass-bright); }
-.seat-cards { display: flex; gap: 3px; margin-bottom: 2px; }
+.seat-cards { display: flex; gap: 3px; margin-bottom: 2px; min-height: 34px; }
 .seat-cards .card { width: 24px; height: 34px; font-size: 10px; }
 .seat-avatar-wrap { position: relative; }
 .seat-avatar {
-  width: 44px; height: 44px; border-radius: 50%;
-  border: 2px solid var(--brass);
+  width: 56px; height: 56px; border-radius: 50%;
+  border: 3px solid var(--brass);
   background: var(--felt-dark);
   display: flex; align-items: center; justify-content: center;
-  font-family: var(--font-display); font-weight: 600; font-size: 15px;
+  font-family: var(--font-display); font-weight: 600; font-size: 18px;
   overflow: hidden;
+  box-shadow: 0 0 10px rgba(201,162,75,0.35);
+}
+.seat.acting .seat-avatar {
+  animation: seat-turn-flash 1s infinite;
 }
 .seat-avatar img { width: 100%; height: 100%; object-fit: cover; }
 .dealer-chip {
@@ -324,19 +335,18 @@ button { font-family: inherit; }
   border: 1px solid var(--wood);
 }
 .seat-name-pill {
-  background: rgba(0,0,0,0.35);
-  padding: 2px 10px;
-  border-radius: 999px;
   font-size: 11px;
   font-weight: 600;
   white-space: nowrap;
-  max-width: 90px;
+  max-width: 84px;
   overflow: hidden;
   text-overflow: ellipsis;
+  margin-top: 2px;
 }
 .seat-chips {
   font-family: var(--font-mono);
-  font-size: 11px;
+  font-size: 12px;
+  font-weight: 700;
   color: var(--brass-bright);
 }
 .seat-bet {
@@ -500,4 +510,42 @@ input[type="range"] { width: 100%; accent-color: var(--brass); }
 .seat-break-tag {
   font-size: 9px; text-transform: uppercase; letter-spacing: 0.05em;
   color: var(--brass-bright);
+}
+
+/* ==========================================================================
+   PORTRAIT LOCK
+   True orientation-locking isn't available on iOS Safari/home-screen apps
+   (a real WebKit limitation, not something fixable here) — this overlay is
+   the reliable cross-platform fallback: block the broken landscape layout
+   and prompt a rotate back, rather than let it render stretched/unusable.
+   ========================================================================== */
+#rotate-overlay {
+  display: none;
+  position: fixed;
+  inset: 0;
+  z-index: 999;
+  background: var(--wood-dark);
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 16px;
+  text-align: center;
+  padding: 30px;
+}
+#rotate-overlay .rotate-icon { font-size: 48px; }
+#rotate-overlay h2 {
+  font-family: var(--font-display);
+  color: var(--cream);
+  font-size: 22px;
+  margin: 0;
+}
+#rotate-overlay p {
+  color: var(--cream-dim);
+  font-size: 14px;
+  margin: 0;
+  max-width: 280px;
+}
+
+@media (orientation: landscape) and (max-height: 500px) {
+  #rotate-overlay { display: flex; }
 }
