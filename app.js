@@ -316,6 +316,10 @@ function enterLobby() {
   onValue(ref(db, `rooms/${roomCode}/meta`), (snap) => {
     metaCache = snap.val();
     if (!metaCache) return;
+    if (metaCache.gameEnded) {
+      showHostLeftScreen();
+      return;
+    }
     const wasHost = isHost;
     isHost = metaCache.hostUid === myUid;
     if (metaCache.started) {
@@ -616,7 +620,9 @@ function renderSeats() {
   const grid = $('seats-grid');
   if (!grid) return;
   grid.innerHTML = '';
-  const ordered = Object.entries(playersCache).sort((a, b) => a[1].seatIndex - b[1].seatIndex);
+  const ordered = Object.entries(playersCache)
+    .filter(([, p]) => !p.onBreak)
+    .sort((a, b) => a[1].seatIndex - b[1].seatIndex);
   if (ordered.length === 0) return;
 
   ordered.forEach(([uid, pl]) => {
@@ -841,13 +847,31 @@ $('btn-next-hand').addEventListener('click', () => {
 
 function renderGameOver() {
   const ranked = Object.entries(playersCache).sort((a, b) => b[1].chips - a[1].chips);
+  $('gameover-title').textContent = 'Game over';
   $('gameover-body').innerHTML = ranked.map(([uid, p], i) =>
     `<div class="result-row${i === 0 ? ' winner' : ''}"><span>${i === 0 ? '\u2605 ' : ''}${p.name}</span><span>${p.chips}</span></div>`
   ).join('');
   $('overlay-gameover').classList.remove('hidden');
 }
+
+let showedHostLeftScreen = false;
+function showHostLeftScreen() {
+  if (showedHostLeftScreen) return; // already showing — avoid re-render churn on repeated meta updates
+  showedHostLeftScreen = true;
+  stopTurnTimer();
+  $('overlay-result').classList.add('hidden');
+  $('overlay-menu').classList.add('hidden');
+  const ranked = Object.entries(playersCache).sort((a, b) => b[1].chips - a[1].chips);
+  $('gameover-title').textContent = 'Host left \u2014 game ended';
+  $('gameover-body').innerHTML = ranked.length
+    ? ranked.map(([uid, p], i) => `<div class="result-row${i === 0 ? ' winner' : ''}"><span>${i === 0 ? '\u2605 ' : ''}${p.name}</span><span>${p.chips}</span></div>`).join('')
+    : '<p class="hint">The host left the table.</p>';
+  $('overlay-gameover').classList.remove('hidden');
+}
+
 $('btn-new-game').addEventListener('click', () => {
   $('overlay-gameover').classList.add('hidden');
+  showedHostLeftScreen = false;
   clearSession();
   location.reload();
 });
@@ -959,6 +983,14 @@ $('btn-copy-log').addEventListener('click', async () => {
   setTimeout(() => { btn.textContent = 'Copy debug log'; }, 1500);
 });
 
-$('btn-leave-game').addEventListener('click', () => {
-  if (confirm('Leave this table?')) { clearSession(); location.reload(); }
+$('btn-leave-game').addEventListener('click', async () => {
+  const message = isHost
+    ? 'You are the host \u2014 leaving will end the game for everyone at the table. Continue?'
+    : 'Leave this table?';
+  if (!confirm(message)) return;
+  if (isHost && roomCode) {
+    try { await update(ref(db, `rooms/${roomCode}/meta`), { gameEnded: true }); } catch (e) { /* ignore — leaving locally regardless */ }
+  }
+  clearSession();
+  location.reload();
 });
